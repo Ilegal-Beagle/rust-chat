@@ -1,21 +1,21 @@
 use std::{
     thread,
+    io,
+    fs::File,
     io::{prelude::*, stdin},
     net::{TcpListener, TcpStream},
 };
 
-fn main() {
-    // read stdin
+fn main() -> io::Result<()> {
     println!("server? (y/n)");
-    let mut buffer:String = String::new();
-    let _ = stdin().read_line(&mut buffer);
-    let choice: &str = buffer.trim();
+    let choice = get_input();
     
     if choice == "y" {
         let _ = server();
     } else {
         let _ = client();
-   }
+    }
+    Ok(())
 }
 
 fn server() -> std::io::Result<()> {
@@ -24,25 +24,25 @@ fn server() -> std::io::Result<()> {
 
     for stream in listener.incoming() {
         let stream = stream?;
-        println!("client connected");
         thread::spawn(|| {
             let _ = handle_connection(stream);
         });
-        println!("client disconnected");
     }
     Ok(())
 }
 
 fn client() -> std::io::Result<()> {
     let mut stream = TcpStream::connect("127.0.0.1:7878")?;
-    println!("connected to server. type a message");
+    println!("connected to server.");
+    
+    println!("Enter a Username: ");
+    let username = get_input();
 
     loop {
-        let mut buffer = String::new();
-        let _ = stdin().read_line(&mut buffer);
-        let message = buffer.trim();
-
-        stream.write_all(message.as_bytes())?;
+        println!("enter a message: ");
+        let message = get_input();
+        let packet = format!("{username} {message}");
+        stream.write_all(packet.as_bytes())?;
 
         let mut resp = vec![0u8; 128];
         let n = stream.read(&mut resp)?;
@@ -59,15 +59,30 @@ fn client() -> std::io::Result<()> {
 }
 
 fn handle_connection(mut stream: TcpStream) -> std::io::Result<()>{
+    let mut file = File::options()
+        .read(true)
+        .write(true)
+        .open("../chat/chat.txt")?;
+    let mut file_buf = [0u8; 512];
     let mut buf = [0u8; 128];
+    println!("client connected");
+
     loop {
         let n = stream.read(&mut buf)?;
-        if n == 0 { break; }
-        let msg = String::from_utf8_lossy(&buf[..n]);
-        
-        println!("received {} bytes: {}", n, msg);
-        
-        stream.write_all(msg.as_bytes())?;
+        let file_n = file.read(&mut file_buf)?;
+        if n == 0 || file_n == 0 { break; }
+
+        // let msg = String::from_utf8_lossy(&buf[..n]);
+        // stream.write_all(msg.as_bytes())?;
+        stream.write_all(&file_buf[..file_n])?;
     }
+
+    println!("client disconnected");
     Ok(())
+}
+
+fn get_input() -> String {
+    let mut buffer:String = String::new();
+    let _ = stdin().read_line(&mut buffer);
+    return buffer.trim().to_string();
 }
