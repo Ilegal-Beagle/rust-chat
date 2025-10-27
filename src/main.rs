@@ -41,7 +41,7 @@ fn client() -> std::io::Result<()> {
     loop {
         println!("enter a message: ");
         let message = get_input();
-        let packet = format!("{username} {message}");
+        let packet = format!("{username}: {message}\n");
         stream.write_all(packet.as_bytes())?;
 
         let mut resp = vec![0u8; 128];
@@ -72,8 +72,8 @@ fn handle_connection(mut stream: TcpStream) -> std::io::Result<()>{
         let file_n = file.read(&mut file_buf)?;
         if n == 0 || file_n == 0 { break; }
 
-        // let msg = String::from_utf8_lossy(&buf[..n]);
-        // stream.write_all(msg.as_bytes())?;
+        let msg = String::from_utf8_lossy(&buf[..n]);
+        file.write_all(msg.as_bytes())?;
         stream.write_all(&file_buf[..file_n])?;
     }
 
@@ -86,3 +86,5 @@ fn get_input() -> String {
     let _ = stdin().read_line(&mut buffer);
     return buffer.trim().to_string();
 }
+
+
