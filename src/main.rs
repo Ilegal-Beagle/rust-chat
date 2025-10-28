@@ -5,17 +5,35 @@ use std::{
     io::{prelude::*, stdin},
     net::{TcpListener, TcpStream},
 };
+use eframe::egui;
 
-fn main() -> io::Result<()> {
-    println!("server? (y/n)");
-    let choice = get_input();
-    
-    if choice == "y" {
-        let _ = server();
-    } else {
-        let _ = client();
-    }
-    Ok(())
+fn main() -> eframe::Result<()> {
+
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "My egui App",
+        options,
+        Box::new(|cc| {
+            // This gives us image support:
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+
+            Ok(Box::<MyApp>::default())
+        }),
+    )
+
+//     println!("server? (y/n)");
+//     let choice = get_input();
+//     
+//     if choice == "y" {
+//         let _ = server();
+//     } else {
+//         let _ = client();
+//     }
+//     Ok(())
 }
 
 fn server() -> std::io::Result<()> {
@@ -87,4 +105,64 @@ fn get_input() -> String {
     return buffer.trim().to_string();
 }
 
+struct MyApp {
+    name: String,
+    text: String,
+    age: u32,
+}
 
+struct Message {
+    user_name: String,
+}
+
+impl Default for MyApp {
+    fn default() -> Self {
+        Self {
+            name: "Arthur".to_owned(),
+            text: "".to_owned(),
+            age: 42,
+        }
+    }
+}
+
+impl Default for Message {
+
+    fn default() -> Self {
+        Self {
+            user_name: "default".to_owned(),
+        }
+    }
+}
+
+impl egui::Widget for &mut Message {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let response = ui.vertical(|ui| {
+            ui.label("username");
+            ui.label("message");
+        }).response;
+
+        response
+    }
+}
+
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
+        egui::SidePanel::right("user_panel").show(ctx, |ui| {
+            ui.vertical(|ui| {
+                ui.label("username");
+            });
+        });
+
+        egui::TopBottomPanel::bottom("my_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut self.text);
+                ui.button("send");
+            });
+        });
+
+       egui::CentralPanel::default().show(ctx, |ui| {
+           ui.add(&mut Message::default());
+       });
+    }
+}
