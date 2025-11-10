@@ -1,7 +1,6 @@
 // network.rs
 use std::{
     thread,
-    io,
     io::{prelude::*, stdin},
     net::{TcpListener, TcpStream},
 };
