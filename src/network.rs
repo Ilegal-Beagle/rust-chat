@@ -2,12 +2,12 @@
 use std::{
     thread,
     io::{prelude::*, stdin},
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpStream, SocketAddr}, //, IpAddr, Ipv4Addr},
+    time::{Duration},
 };
 
-
 pub fn server() -> std::io::Result<()> {
-    let listener:TcpListener = TcpListener::bind("127.0.0.1:7878")?;
+    let listener = TcpListener::bind("127.0.0.1:7878")?;
     println!("Started listening on port 7878");
 
     for stream in listener.incoming() {
@@ -17,6 +17,13 @@ pub fn server() -> std::io::Result<()> {
         });
     }
     Ok(())
+}
+
+pub fn try_connect(address: &SocketAddr, timeout: Duration) -> bool {
+    match TcpStream::connect_timeout(address, timeout) {
+        Ok(_) => true,
+        Err(_) => false
+    }
 }
 
 pub fn client() -> std::io::Result<()> {
@@ -47,23 +54,15 @@ pub fn client() -> std::io::Result<()> {
 }
 
 pub fn handle_connection(mut stream: TcpStream) -> std::io::Result<()>{
-    // let mut file = File::options()
-    //     .read(true)
-    //     .write(true)
-    //     .open("../chat/chat.txt")?;
-    // let mut file_buf = [0u8; 512];
     let mut buf = [0u8; 128];
     println!("client connected");
 
     loop {
         let n = stream.read(&mut buf)?;
-        // let file_n = file.read(&mut file_buf)?;
-        // if n == 0 || file_n == 0 { break; }
         if n == 0 { break; }
 
         let msg = String::from_utf8_lossy(&buf[..n]);
         stream.write_all(msg.as_bytes())?;
-        // stream.write_all(&file_buf[..file_n])?;
     }
 
     println!("client disconnected");
