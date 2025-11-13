@@ -3,13 +3,15 @@ use crate::network;
 
 use std::{
     thread,
-    // io::{prelude::*, stdin},
+    fmt,
+    io::{prelude::*, stdin},
     net::{TcpListener, TcpStream, SocketAddr, IpAddr, Ipv4Addr},
     time::{Duration},
     sync::{mpsc},
 };
 
-
+use serde::{Serialize, Deserialize};
+use serde_json;
 
 pub struct App {
     text: String,
@@ -20,9 +22,16 @@ pub struct App {
     rx: mpsc::Receiver<Message>,
 }
 
-struct Message {
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Message {
     user_name: String,
     message: String,
+}
+
+impl fmt::Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "User: {}, Message: {}", self.user_name, self.message)
+    }
 }
 
 impl Default for App {
@@ -87,16 +96,43 @@ impl App {
 
             // create a client
             thread::spawn(move || {
-                let mut stream = TcpStream::connect("127.0.0.1:7878").expect("could not connect");
+                let mut stream = TcpStream::connect(&SOCKET).expect("could not connect");
+                stream.set_read_timeout(Some(Duration::new(0, 10000)));
+                let mut buf = [0u8; 128];
                 println!("connected to server.");
 
                 loop {
                     // get client message from UI
                     match rx_ui.try_recv() {
-                        Ok(msg) => println!("message received: {}", msg.message),
+                        Ok(msg) => {
+                            // serialize message
+                            match serde_json::to_string(&msg) {
+                                
+                                // send to server
+                                Ok(serialzed_msg) => {
+                                    
+                                    match stream.write_all(serialzed_msg.as_bytes()) {
+                                        Ok(_) => {println!("message sent to server")},
+                                        Err(e) => {println!("Error in sending message: {e:?}")},
+                                    }
+                                },
+                                
+                                Err(e) => {
+                                    println!("error in serializing message: {e:?}");
+                                },
+                            }
+
+                        },
                         Err(_) => {},
                     }
+
                     // get server response
+                    // let bytes_read = stream.read(&mut buf).expect("error reading from server");
+                    // let message = str::from_utf8(&buf[..bytes_read])
+                    //     .expect("error converting from utf8 to str");
+                    
+                    // let deserialized: Message = serde_json::from_str(message).unwrap();
+                    
                 }
             } );
         }

@@ -1,23 +1,12 @@
 // network.rs
 use std::{
-    thread,
+    str,
     io::{prelude::*, stdin},
     net::{TcpListener, TcpStream, SocketAddr}, //, IpAddr, Ipv4Addr},
     time::{Duration},
 };
 
-pub fn server() -> std::io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:7878")?;
-    println!("Started listening on port 7878");
-
-    for stream in listener.incoming() {
-        let stream = stream?;
-        thread::spawn(|| {
-            let _ = handle_connection(stream);
-        });
-    }
-    Ok(())
-}
+use crate::ui::chat::Message;
 
 pub fn try_connect(address: &SocketAddr, timeout: Duration) -> bool {
     match TcpStream::connect_timeout(address, timeout) {
@@ -26,44 +15,49 @@ pub fn try_connect(address: &SocketAddr, timeout: Duration) -> bool {
     }
 }
 
-pub fn client() -> std::io::Result<()> {
-    let mut stream = TcpStream::connect("127.0.0.1:7878")?;
-    println!("connected to server.");
-    
-    println!("Enter a Username: ");
-    let username = get_input();
-
-    loop {
-        println!("enter a message: ");
-        let message = get_input();
-        let packet = format!("{username}: {message}\n");
-        stream.write_all(packet.as_bytes())?;
-
-        let mut resp = vec![0u8; 128];
-        let n = stream.read(&mut resp)?;
-
-        if message == "goodbye" || message.len() == 0 {
-            break;
-        }
-
-        if n > 0 {
-            println!("server replied: {}", String::from_utf8_lossy(&resp[..n]));
-        }
-    }
-    Ok(())
-}
-
 pub fn handle_connection(mut stream: TcpStream) -> std::io::Result<()>{
-    let mut buf = [0u8; 128];
+    let mut buf = [0u8; 128]; // where the message recved is stored
+    let mut bytes_read = 1;
     println!("client connected");
 
     loop {
-        let n = stream.read(&mut buf)?;
-        if n == 0 { break; }
+        match stream.read(&mut buf) {
+            Ok(0) => { break; },
+            
+            Ok(bytes_read) => {
+                let message = match str::from_utf8(&buf[..bytes_read]) {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        eprintln!("Invalid UTF8: {e}");
+                        continue;
+                    },
+                }
 
-        let msg = String::from_utf8_lossy(&buf[..n]);
-        stream.write_all(msg.as_bytes())?;
+                let deserialized_msg: Message = match serde_json::from_str(&message) {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        eprintln!("Could not deserialize message: {e}");
+                        continue;
+                    },
+                }
+
+                // write to server
+            },
+        }
     }
+
+    // while bytes_read != 0 {
+    //     bytes_read = stream.read(&mut buf)?;
+
+    //     // bytes to string
+    //     let message = str::from_utf8(&buf[..bytes_read]).expect("utf8 -> str failed");
+
+    //     // string to object
+    //     let deserialized: Message = serde_json::from_str(&message).expect("str -> Message failed");
+    //     println!("Message received: {}", deserialized);
+
+    //     stream.write_all(message.as_bytes())?;
+    // }
 
     println!("client disconnected");
     Ok(())
