@@ -4,7 +4,7 @@ use crate::network;
 use std::{
     thread,
     fmt,
-    io::{prelude::*, stdin},
+    io::{prelude::*},
     net::{TcpListener, TcpStream, SocketAddr, IpAddr, Ipv4Addr},
     time::{Duration},
     sync::{mpsc},
@@ -14,8 +14,8 @@ use serde::{Serialize, Deserialize};
 use serde_json;
 
 pub struct App {
+    user_name: String,
     text: String,
-    init: bool,
     messages: Vec<Message>,
     users: Vec<String>,
     tx: mpsc::Sender<Message>,
@@ -30,7 +30,7 @@ pub struct Message {
 
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "User: {}, Message: {}", self.user_name, self.message)
+        write!(f, "User: {}\nMessage: {}", self.user_name, self.message)
     }
 }
 
@@ -38,8 +38,8 @@ impl Default for App {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
+            user_name: "Default".to_string(),
             text: "".to_owned(),
-            init: true,
             messages: Vec::new(),
             users: Vec::new(),
             tx: tx,
@@ -97,49 +97,82 @@ impl App {
             // create a client
             thread::spawn(move || {
                 let mut stream = TcpStream::connect(&SOCKET).expect("could not connect");
-                stream.set_read_timeout(Some(Duration::new(0, 10000)));
+                stream.set_read_timeout(Some(Duration::new(0, 10000))).expect("could not set timeout");
                 let mut buf = [0u8; 128];
                 println!("connected to server.");
 
                 loop {
                     // get client message from UI
                     match rx_ui.try_recv() {
+                        
                         Ok(msg) => {
                             // serialize message
-                            match serde_json::to_string(&msg) {
-                                
-                                // send to server
-                                Ok(serialzed_msg) => {
-                                    
-                                    match stream.write_all(serialzed_msg.as_bytes()) {
-                                        Ok(_) => {println!("message sent to server")},
-                                        Err(e) => {println!("Error in sending message: {e:?}")},
-                                    }
-                                },
-                                
+                            let serialized_msg = match serde_json::to_string(&msg) {
+                                Ok(msg) => msg,                                
                                 Err(e) => {
-                                    println!("error in serializing message: {e:?}");
+                                    eprintln!("error in serializing message: {e:?}");
+                                    continue;
                                 },
-                            }
+                            };
+                            
+                            // send message to server
+                            match stream.write_all(serialized_msg.as_bytes()) {
+                                Ok(_) => {println!("message sent to server")},
+                                Err(e) => {println!("Error in sending message: {e:?}")},
+                            };
+
+                            // receive repsonse from server
+                            match stream.read(&mut buf) {
+                                Ok(0) => break,
+
+                                Ok(bytes_read) => {
+                                    // UTF8 to str
+                                    let message = match str::from_utf8(&buf[..bytes_read]) {
+                                        Ok(msg) => msg,
+                                        Err(e) => {
+                                            eprintln!("Invalid UTF8: {e}");
+                                            continue;
+                                        },
+                                    };
+
+                                    // str to Message
+                                    let deserialized_msg: Message = match serde_json::from_str(&message) {
+                                        Ok(msg) => msg,
+                                        Err(e) => {
+                                            eprintln!("Could not deserialize message: {e}");
+                                            continue;
+                                        },
+                                    };
+
+                                    match tx_net.send(deserialized_msg) {
+                                        Ok(_) => {},
+                                        Err(e) => {
+                                            eprintln!("Error sending message: {e}");
+                                            continue;
+                                        }
+                                    }
+
+                                },
+
+                                Err(e) => {
+                                    eprintln!("Error receiving message: {e}");
+                                    continue;
+                                },
+
+                            };
 
                         },
-                        Err(_) => {},
-                    }
 
-                    // get server response
-                    // let bytes_read = stream.read(&mut buf).expect("error reading from server");
-                    // let message = str::from_utf8(&buf[..bytes_read])
-                    //     .expect("error converting from utf8 to str");
-                    
-                    // let deserialized: Message = serde_json::from_str(message).unwrap();
+                        Err(_) => {/* Do nothing if nothing was recved */},
+                    }
                     
                 }
             } );
         }
 
         Self {
+            user_name: "Default".to_string(),
             text: "".to_owned(),
-            init: true,
             messages: Vec::new(),
             users: Vec::new(),
             tx: tx_ui,
@@ -151,13 +184,12 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
 
-        egui::SidePanel::right("user_panel").show(ctx, |ui| {
-            ui.vertical(|ui| {
-                for msg in self.messages.iter_mut() {
-                    ui.add(msg);
-                }
-            });
-        });
+        match self.rx.try_recv() {
+            Ok(msg) => self.messages.push(msg),
+            Err(_) => {},
+        }
+
+        // egui::SidePanel::right("user_panel").show(ctx, |ui| {});
 
         egui::TopBottomPanel::bottom("my_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -168,9 +200,9 @@ impl eframe::App for App {
                     ui.button("send").clicked() {
                     
                     self.tx.send( Message {
-                        user_name: "default".to_string(),
+                        user_name: self.user_name.clone(),
                         message: self.text.clone(),
-                    } );
+                    } ).unwrap();
 
                     self.text.clear();
                 }
