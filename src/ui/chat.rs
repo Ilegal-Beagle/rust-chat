@@ -75,20 +75,19 @@ impl App {
         let (tx_ui, rx_ui) = mpsc::channel::<Message>();
         let (tx_net, rx_net) = mpsc::channel::<Message>();
         
+        // if no server is found
         if !network::try_connect(&SOCKET, TIMEOUT) {
 
             // create a server
             thread::spawn( move || {
                 network::server(&SOCKET);
-            });
-            
+            });            
 
-        } else {
-            // create a client
+        }
+            // and create a client
             thread::spawn(move || {
                 network::client(&SOCKET, &rx_ui, &tx_net);
             } );
-        }
 
         Self {
             user_name: "Default".to_string(),
@@ -109,7 +108,12 @@ impl eframe::App for App {
             Err(_) => {},
         }
 
-        // egui::SidePanel::right("user_panel").show(ctx, |ui| {});
+        egui::SidePanel::right("user_panel").show(ctx, |ui| {
+            ui.vertical( |ui| {
+                ui.label(egui::RichText::new("Users\n").weak());
+            });
+            // for loop to list users
+        });
 
         egui::TopBottomPanel::bottom("my_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {

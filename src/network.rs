@@ -3,8 +3,9 @@ use std::{
     str,
     thread,
     io::{prelude::*},
-    net::{TcpListener, TcpStream, SocketAddr}, //, IpAddr, Ipv4Addr},
+    net::{TcpListener, TcpStream, SocketAddr},
     time::{Duration},
+    sync::{Arc, Mutex},
     sync::mpsc::{Sender, Receiver},
     error::{Error},
 };
@@ -18,75 +19,82 @@ pub fn try_connect(address: &SocketAddr, timeout: Duration) -> bool {
     }
 }
 
-pub fn handle_connection(mut stream: TcpStream) -> std::io::Result<()>{
-    let mut buf = [0u8; 128]; // where the message recved is stored
+pub fn handle_connection(mut stream: TcpStream, clients: Arc<Mutex<Vec<TcpStream>>>) -> Result<(), Box<dyn Error>> {
+    let mut buf = [0u8; 128];
     println!("client connected");
 
     loop {
-        match stream.read(&mut buf) {
-            Ok(0) => { break; },
+        let bytes_read = stream.read(&mut buf)?;
+
+        if bytes_read == 0 { break; }
             
-            Ok(bytes_read) => {
-                // UTF8 to str
-                let message = match str::from_utf8(&buf[..bytes_read]) {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        eprintln!("Invalid UTF8: {e}");
-                        continue;
-                    },
-                };
+        let message = str::from_utf8(&buf[..bytes_read])?;
+        let deserialized_msg: Message = serde_json::from_str(&message)?;
 
-                // str to Message
-                let deserialized_msg: Message = match serde_json::from_str(&message) {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        eprintln!("Could not deserialize message: {e}");
-                        continue;
-                    },
-                };
+        println!("{}", deserialized_msg);
 
-                println!("{}", deserialized_msg);
+        { // start locking
+            let mut clients = match clients.lock() {
+                Ok(c) => c,
+                Err(poisoned) => poisoned.into_inner(),
+            };
 
-                // send
-                match stream.write_all(message.as_bytes()) {
-                    Ok(_) => {println!("message sent to client");},
-                    Err(e) => {
-                        eprintln!("Could not write to client: {e}");
-                        continue;
-                    },
-                }
-            },
-
-            Err(e) => {
-                eprintln!("Could not read file stream: {e}");
-                continue;
+            for client in clients.iter_mut() {
+                client.write_all(message.as_bytes());
             }
-        }
+        } // end locking
     }
 
-    println!("client disconnected");
+    // TODO: remove client after they disconnect 
+
     Ok(())
 }
 
-pub fn server(socket: &SocketAddr) {
-    let listener = TcpListener::bind(&socket).expect("couldnt bind");
+pub fn server(socket: &SocketAddr) -> Result<(), Box<dyn Error>> {
+    let listener = TcpListener::bind(&socket)?;
+    let clients = Arc::new(Mutex::new(Vec::<TcpStream>::new())); // creates vec of clients w/ locking and ref-counting
     println!("Started listening on port 7878");
 
     for stream in listener.incoming() {
-        let stream = stream.unwrap();
+        let stream = stream?;
+        
+        { // changing info of shared resourse client
+            let mut c = clients.lock().unwrap(); // ADD PROPER ERROR HANDLING
+            c.push(stream.try_clone()?);
+        } // end of changing shared resource client
+
+        let client_copy = Arc::clone(&clients);
+
         thread::spawn(|| {
-            let _ = handle_connection(stream);
+            let _ = handle_connection(stream, client_copy);
         });
+
     }
+    Ok(())
 }
 
 // does the client functions. gets a message from user and sends and reveives it back from server.
-pub fn client(socket: &SocketAddr, rx_ui: &Receiver<Message>, tx_net: &Sender<Message>) {
+pub fn client(socket: &SocketAddr, rx_ui: &Receiver<Message>, tx_net: &Sender<Message>) -> Result<(), Box<dyn Error>>{
     let mut stream = TcpStream::connect(&socket).expect("could not connect");
-    stream.set_read_timeout(Some(Duration::new(0, 10000))).expect("could not set timeout");
+    stream.set_read_timeout(Some(Duration::from_millis(100))).expect("could not set timeout");
     println!("connected to server.");
 
     loop {
+
+        // receive repsonse from server and send it to UI
+        match get_message(&mut stream) {
+            Ok(msg) => {
+                match tx_net.send(msg) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        eprintln!("Error sending message: {e}");
+                        continue;
+                    }
+                }
+            },
+            Err(e) => {},
+        };
+
         // get client message from UI
         match rx_ui.try_recv() {
             
@@ -106,22 +114,6 @@ pub fn client(socket: &SocketAddr, rx_ui: &Receiver<Message>, tx_net: &Sender<Me
                     Err(e) => {println!("Error in sending message: {e:?}")},
                 };
 
-                // receive repsonse from server
-                let msg = match get_message(&mut stream) {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        println!("Error: {e}");
-                        continue;
-                    },
-                };
-
-                match tx_net.send(msg) {
-                    Ok(_) => {},
-                    Err(e) => {
-                        eprintln!("Error sending message: {e}");
-                        continue;
-                    }
-                }
             },
 
             Err(_) => {/* Do nothing if nothing was recved */},
