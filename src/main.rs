@@ -1,6 +1,7 @@
-mod ui;
 mod network;
-use ui::chat::App;
+mod chat;
+
+use crate::chat::App;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {

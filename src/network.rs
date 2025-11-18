@@ -10,7 +10,7 @@ use std::{
     error::{Error},
 };
 
-use crate::ui::chat::Message;
+use crate::chat::Message;
 
 pub fn try_connect(address: &SocketAddr, timeout: Duration) -> bool {
     match TcpStream::connect_timeout(address, timeout) {
@@ -21,18 +21,16 @@ pub fn try_connect(address: &SocketAddr, timeout: Duration) -> bool {
 
 pub fn handle_connection(mut stream: TcpStream, clients: Arc<Mutex<Vec<TcpStream>>>) -> Result<(), Box<dyn Error>> {
     let mut buf = [0u8; 128];
-    println!("client connected");
 
     loop {
         let bytes_read = stream.read(&mut buf)?;
-
         if bytes_read == 0 { break; }
-            
         let message = str::from_utf8(&buf[..bytes_read])?;
         let deserialized_msg: Message = serde_json::from_str(&message)?;
 
         println!("{}", deserialized_msg);
 
+        // send received message to all clients
         { // start locking
             let mut clients = match clients.lock() {
                 Ok(c) => c,
@@ -40,16 +38,24 @@ pub fn handle_connection(mut stream: TcpStream, clients: Arc<Mutex<Vec<TcpStream
             };
 
             for client in clients.iter_mut() {
-                client.write_all(message.as_bytes());
+                client.write_all(message.as_bytes())?;
             }
         } // end locking
     }
 
-    // TODO: remove client after they disconnect 
+    { // start locking
+        let mut clients = match clients.lock() {
+            Ok(c) => c,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let index = clients.iter().position(|x| (*x).peer_addr().unwrap() == stream.peer_addr().unwrap()).unwrap();
+        clients.remove(index);
+    } // end locking
 
     Ok(())
 }
 
+//this function does the thing that u need for the thing to that thing for that thang!
 pub fn server(socket: &SocketAddr) -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(&socket)?;
     let clients = Arc::new(Mutex::new(Vec::<TcpStream>::new())); // creates vec of clients w/ locking and ref-counting
@@ -58,10 +64,10 @@ pub fn server(socket: &SocketAddr) -> Result<(), Box<dyn Error>> {
     for stream in listener.incoming() {
         let stream = stream?;
         
-        { // changing info of shared resourse client
-            let mut c = clients.lock().unwrap(); // ADD PROPER ERROR HANDLING
+        { // start lock
+            let mut c = clients.lock().unwrap();
             c.push(stream.try_clone()?);
-        } // end of changing shared resource client
+        } // end lock
 
         let client_copy = Arc::clone(&clients);
 
@@ -75,8 +81,8 @@ pub fn server(socket: &SocketAddr) -> Result<(), Box<dyn Error>> {
 
 // does the client functions. gets a message from user and sends and reveives it back from server.
 pub fn client(socket: &SocketAddr, rx_ui: &Receiver<Message>, tx_net: &Sender<Message>) -> Result<(), Box<dyn Error>>{
-    let mut stream = TcpStream::connect(&socket).expect("could not connect");
-    stream.set_read_timeout(Some(Duration::from_millis(100))).expect("could not set timeout");
+    let mut stream = TcpStream::connect(&socket)?;
+    stream.set_read_timeout(Some(Duration::from_millis(100)))?;
     println!("connected to server.");
 
     loop {
@@ -92,7 +98,7 @@ pub fn client(socket: &SocketAddr, rx_ui: &Receiver<Message>, tx_net: &Sender<Me
                     }
                 }
             },
-            Err(e) => {},
+            Err(_) => {},
         };
 
         // get client message from UI
@@ -109,10 +115,7 @@ pub fn client(socket: &SocketAddr, rx_ui: &Receiver<Message>, tx_net: &Sender<Me
                 };
                 
                 // send message to server
-                match stream.write_all(serialized_msg.as_bytes()) {
-                    Ok(_) => {println!("message sent to server")},
-                    Err(e) => {println!("Error in sending message: {e:?}")},
-                };
+                stream.write_all(serialized_msg.as_bytes())?;
 
             },
 
@@ -126,14 +129,7 @@ pub fn client(socket: &SocketAddr, rx_ui: &Receiver<Message>, tx_net: &Sender<Me
 pub fn get_message(stream: &mut TcpStream) -> Result<Message, Box<dyn Error>> {
     let mut buf = [0u8; 128];
     let bytes_read = stream.read(&mut buf)?;
-    
-    // UTF8 to str
     let message = str::from_utf8(&buf[..bytes_read])?;
-
-    // str to Message
     let deserialized_msg: Message = serde_json::from_str(&message)?;
-
-    println!("{}", deserialized_msg);
-
     Ok(deserialized_msg)
 }
