@@ -1,5 +1,6 @@
 mod network;
 mod chat;
+mod message;
 
 use crate::chat::App;
 

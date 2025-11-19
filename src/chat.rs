@@ -1,19 +1,19 @@
 // ui.rs
 use crate::network;
+use crate::message::Message;
 
 use std::{
     thread,
-    fmt,
     net::{SocketAddr, IpAddr, Ipv4Addr},
     time::{Duration},
     sync::{mpsc},
 };
 
-use serde::{Serialize, Deserialize};
 use egui::RichText;
 
 enum State {
     Start,
+    Connect,
     Chat,
 }
 
@@ -25,67 +25,23 @@ pub struct App {
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
     current_state: State,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Message {
-    user_name: String,
-    message: String,
-}
-
-impl fmt::Display for Message {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "User: {}\nMessage: {}", self.user_name, self.message)
-    }
-}
-
-impl Default for Message {
-    fn default() -> Self {
-        Self {
-            user_name: "default".to_owned(),
-            message: "default message".to_owned(),
-        }
-    }
-}
-
-impl egui::Widget for &mut Message {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let response = ui.vertical(|ui| {
-            ui.label(egui::RichText::new(&self.user_name).weak().italics());
-            ui.label(&self.message);
-        }).response;
-
-        response
-    }
+    socket_addr: SocketAddr,
+    ip_str: String,
 }
 
 impl App {
     pub fn new() -> Self {
-        const SOCKET: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 7878);
-        const TIMEOUT: Duration = Duration::new(5, 0);
-
-        let (tx_ui, rx_ui) = mpsc::channel::<Message>();
-        let (tx_net, rx_net) = mpsc::channel::<Message>();
-        
-        // if no server is found
-        if !network::try_connect(&SOCKET, TIMEOUT) {
-            thread::spawn( move || {
-                let _ = network::server(&SOCKET);
-            });
-        }
-            thread::sleep(Duration::new(2, 0));
-            thread::spawn(move || {
-                let _ = network::client(&SOCKET, &rx_ui, &tx_net);
-            } );
-
+        let (tx, rx) = mpsc::channel();
         Self {
             user_name: "Default".to_string(),
             text: "".to_owned(),
             messages: Vec::new(),
             users: Vec::new(),
-            tx: tx_ui,
-            rx: rx_net,
+            tx: tx,
+            rx: rx,
             current_state: State::Start,
+            socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 7878),
+            ip_str: "127.0.0.1:7878".to_string()
         }
     }
 
@@ -139,12 +95,44 @@ impl App {
                     ui.text_edit_singleline(&mut self.user_name);
                 });
 
+                ui.horizontal(|ui| {
+                    ui.label("ip and port: ");
+                    ui.text_edit_singleline(&mut self.ip_str);
+                });
+
                 if ui.button("Enter").clicked()  {
-                    self.current_state = State::Chat;
+                    self.socket_addr = self.ip_str.as_str().parse().expect("cant");
+                    println!("{:?}", self.socket_addr);
+                    self.current_state = State::Connect;
                 }
             });
        });        
     }
+
+    fn handle_connect(&mut self) {
+        const TIMEOUT: Duration = Duration::new(5, 0);
+
+        let (tx_ui, rx_ui) = mpsc::channel::<Message>();
+        let (tx_net, rx_net) = mpsc::channel::<Message>();
+        let socket = self.socket_addr.clone();
+        
+        // if no server is found
+        if !network::try_connect(&socket, TIMEOUT) {
+            thread::spawn( move || {
+                let _ = network::server(&socket);
+            });
+        }
+
+        thread::sleep(Duration::new(1, 0));
+        thread::spawn(move || {
+            let _ = network::client(&socket, rx_ui, tx_net);
+        });
+
+        self.tx = tx_ui;
+        self.rx = rx_net;
+        self.current_state = State::Chat;
+    }
+
 }
 
 impl eframe::App for App {
@@ -152,6 +140,7 @@ impl eframe::App for App {
         match self.current_state {
             State::Start => self.render_start(ctx),
             State::Chat => self.render_chat(ctx),
+            State::Connect => self.handle_connect(),
         }
     }
 }

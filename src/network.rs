@@ -10,7 +10,7 @@ use std::{
     error::{Error},
 };
 
-use crate::chat::Message;
+use crate::message::Message;
 
 pub fn try_connect(address: &SocketAddr, timeout: Duration) -> bool {
     match TcpStream::connect_timeout(address, timeout) {
@@ -43,6 +43,7 @@ pub fn handle_connection(mut stream: TcpStream, clients: Arc<Mutex<Vec<TcpStream
         } // end locking
     }
 
+    // remove client from list
     { // start locking
         let mut clients = match clients.lock() {
             Ok(c) => c,
@@ -80,7 +81,7 @@ pub fn server(socket: &SocketAddr) -> Result<(), Box<dyn Error>> {
 }
 
 // does the client functions. gets a message from user and sends and reveives it back from server.
-pub fn client(socket: &SocketAddr, rx_ui: &Receiver<Message>, tx_net: &Sender<Message>) -> Result<(), Box<dyn Error>>{
+pub fn client(socket: &SocketAddr, rx_ui: Receiver<Message>, tx_net: Sender<Message>) -> Result<(), Box<dyn Error>>{
     let mut stream = TcpStream::connect(&socket)?;
     stream.set_read_timeout(Some(Duration::from_millis(100)))?;
     println!("connected to server.");
