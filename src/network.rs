@@ -2,7 +2,7 @@
 use std::{
     str,
     thread,
-    io::{prelude::*},
+    io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream, SocketAddr},
     time::{Duration},
     sync::{Arc, Mutex},
@@ -26,9 +26,6 @@ pub fn handle_connection(mut stream: TcpStream, clients: Arc<Mutex<Vec<TcpStream
         let bytes_read = stream.read(&mut buf)?;
         if bytes_read == 0 { break; }
         let message = str::from_utf8(&buf[..bytes_read])?;
-        let deserialized_msg: Message = serde_json::from_str(&message)?;
-
-        println!("{}", deserialized_msg);
 
         // send received message to all clients
         { // start locking
@@ -107,13 +104,15 @@ pub fn client(socket: &SocketAddr, rx_ui: Receiver<Message>, tx_net: Sender<Mess
             
             Ok(msg) => {
                 // serialize message
-                let serialized_msg = match serde_json::to_string(&msg) {
+                let mut serialized_msg = match serde_json::to_string(&msg) {
                     Ok(msg) => msg,                                
                     Err(e) => {
                         eprintln!("error in serializing message: {e:?}");
                         continue;
                     },
                 };
+
+                serialized_msg.push_str("\n");
                 
                 // send message to server
                 stream.write_all(serialized_msg.as_bytes())?;
@@ -128,9 +127,11 @@ pub fn client(socket: &SocketAddr, rx_ui: Receiver<Message>, tx_net: Sender<Mess
 
 // gets message from TCP, converts it to Message and returns it
 pub fn get_message(stream: &mut TcpStream) -> Result<Message, Box<dyn Error>> {
-    let mut buf = [0u8; 128];
-    let bytes_read = stream.read(&mut buf)?;
-    let message = str::from_utf8(&buf[..bytes_read])?;
+    let mut buf = Vec::new();
+    let mut reader = BufReader::new(stream);
+    let bytes_read = reader.read_until(b'\n', &mut buf)?;
+    let message = str::from_utf8(&buf)?;
+
     let deserialized_msg: Message = serde_json::from_str(&message)?;
     Ok(deserialized_msg)
 }
