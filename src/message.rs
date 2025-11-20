@@ -13,6 +13,7 @@ pub enum MessageType {
 pub struct Message {
     pub user_name: String,
     pub message: String,
+    pub image: Vec<u8>,
 }
 
 impl fmt::Display for Message {
@@ -26,6 +27,7 @@ impl Default for Message {
         Self {
             user_name: "default".to_owned(),
             message: "default message".to_owned(),
+            image: Vec::<u8>::new(),
         }
     }
 }
@@ -36,7 +38,14 @@ impl egui::Widget for &mut Message {
             ui.label(egui::RichText::new(&self.user_name).weak().italics());
             ui.label(&self.message);
         }).response;
-
+        if !self.image.is_empty() {
+            ui.add(
+                egui::Image::from_bytes("bytes://image", self.image.clone())
+                .max_size(egui::vec2(250.0, 250.0))
+                .fit_to_exact_size(egui::vec2(250.0, 250.0))
+            );
+        }
+        
         response
     }
 }

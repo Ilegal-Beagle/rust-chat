@@ -4,12 +4,14 @@ use crate::message::Message;
 
 use std::{
     thread,
+    fs::{read},
     net::{SocketAddr, IpAddr, Ipv4Addr},
     time::{Duration},
     sync::{mpsc},
 };
 
-use egui::RichText;
+use egui::{RichText};
+use egui_file_dialog::FileDialog;
 
 enum State {
     Start,
@@ -25,6 +27,7 @@ pub struct App {
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
     current_state: State,
+    file_dialog: FileDialog,
     socket_addr: SocketAddr,
     ip_str: String,
 }
@@ -40,48 +43,90 @@ impl App {
             tx: tx,
             rx: rx,
             current_state: State::Start,
-            socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 7878),
-            ip_str: "127.0.0.1:7878".to_string()
+            file_dialog: FileDialog::new(),
+            socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127,0,0,1)), 7878),
+            ip_str: "127.0.0.1:7878".to_string(),
         }
     }
 
     fn render_chat(&mut self, ctx: &egui::Context) {
+        
         match self.rx.try_recv() {
             Ok(msg) => self.messages.push(msg),
-            Err(_) => {},
+            Err(_) => {}
         }
-        
-        egui::SidePanel::right("user_panel").show(ctx, |ui| {
-            ui.vertical( |ui| {
-                ui.label(egui::RichText::new("Users\n").weak());
-                for user in self.users.iter_mut() {
-                    ui.label(user.to_string());
-                }
-            });
-        });
-        
+
         egui::TopBottomPanel::bottom("message_entry").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let response = ui.text_edit_singleline(&mut self.text);
-        
+                // ui.set_width(250.0);
+                let text_resp = ui.text_edit_singleline(&mut self.text);
+                let send_button_resp = ui.button("send");
+                let image_button_resp= ui.button("add image");
+
                 // When enter is pressed in text box or send button is pressed
-                if (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) ||
-                    ui.button("send").clicked() {
-                    
-                    self.tx.send( Message {
-                        user_name: self.user_name.clone(),
-                        message: self.text.clone(),
-                    } ).unwrap();
-        
+                if (text_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    || send_button_resp.clicked()
+                {
+                    self.tx
+                        .send(Message {
+                            user_name: self.user_name.clone(),
+                            message: self.text.clone(),
+                            image: Vec::<u8>::new(),
+                        })
+                        .unwrap();
+
                     self.text.clear();
                 }
+
+
+                // image handling
+                if image_button_resp.clicked() {
+                    self.file_dialog.pick_file();
+                }
+
+                self.file_dialog.update(ctx);
+
+                if let Some(path) = self.file_dialog.take_picked() {
+                    let p = path.to_str().unwrap();
+                    let image = read(p).expect("invalid file path");
+
+                    self.tx
+                    .send(Message {
+                        user_name: self.user_name.clone(),
+                        message: self.text.clone(),
+                        image: image,
+                    })
+                    .unwrap();
+                }
+
             });
         });
-        
+
+
+        egui::SidePanel::right("user_panel")
+            .resizable(false)
+            .exact_width(100.0)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Users\n").weak());
+                    for user in self.users.iter_mut() {
+                        ui.label(user.to_string());
+                    }
+                });
+            });
+
+
         egui::CentralPanel::default().show(ctx, |ui| {
-           for msg in self.messages.iter_mut() {
-                ui.add(msg);
-           }
+            ui.heading("pibbles");
+            egui::ScrollArea::vertical()
+            .enable_scrolling(true)
+            .stick_to_bottom(true)
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                for msg in self.messages.iter_mut() {
+                    ui.add(msg);
+                }
+            });
         });
     }
 
@@ -89,7 +134,7 @@ impl App {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.heading(RichText::new("Rust Chat").heading().strong());
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Username: ");
                     ui.text_edit_singleline(&mut self.user_name);
@@ -106,7 +151,7 @@ impl App {
                     self.current_state = State::Connect;
                 }
             });
-       });        
+        });
     }
 
     fn handle_connect(&mut self) {
