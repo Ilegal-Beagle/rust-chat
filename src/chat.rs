@@ -1,6 +1,6 @@
 // ui.rs
 use crate::network;
-use crate::message::Message;
+use crate::message::{MessageType, Message, Handshake};
 
 use std::{
     thread,
@@ -8,6 +8,7 @@ use std::{
     net::{SocketAddr, IpAddr, Ipv4Addr},
     time::{Duration},
     sync::{mpsc},
+    collections::{HashMap},
 };
 
 use egui::{RichText};
@@ -22,10 +23,10 @@ enum State {
 pub struct App {
     user_name: String,
     text: String,
-    messages: Vec<Message>,
-    users: Vec<String>,
-    tx: mpsc::Sender<Message>,
-    rx: mpsc::Receiver<Message>,
+    messages: Vec<MessageType>,
+    users: HashMap<String, String>,
+    tx: mpsc::Sender<MessageType>,
+    rx: mpsc::Receiver<MessageType>,
     current_state: State,
     file_dialog: FileDialog,
     socket_addr: SocketAddr,
@@ -39,7 +40,7 @@ impl App {
             user_name: "Default".to_string(),
             text: "".to_owned(),
             messages: Vec::new(),
-            users: Vec::new(),
+            users: HashMap::new(),
             tx: tx,
             rx: rx,
             current_state: State::Start,
@@ -68,11 +69,11 @@ impl App {
                     || send_button_resp.clicked()
                 {
                     self.tx
-                        .send(Message {
+                        .send(MessageType::Message(Message {
                             user_name: self.user_name.clone(),
                             message: self.text.clone(),
                             image: Vec::<u8>::new(),
-                        })
+                        }))
                         .unwrap();
 
                     self.text.clear();
@@ -91,11 +92,11 @@ impl App {
                     let image = read(p).expect("invalid file path");
 
                     self.tx
-                    .send(Message {
+                    .send(MessageType::Message(Message {
                         user_name: self.user_name.clone(),
                         message: self.text.clone(),
                         image: image,
-                    })
+                    }))
                     .unwrap();
                 }
 
@@ -109,8 +110,8 @@ impl App {
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
                     ui.label(egui::RichText::new("Users\n").weak());
-                    for user in self.users.iter_mut() {
-                        ui.label(user.to_string());
+                    for (key, _) in &mut self.users {
+                        ui.label(key);
                     }
                 });
             });
@@ -119,12 +120,18 @@ impl App {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("pibbles");
             egui::ScrollArea::vertical()
-            .enable_scrolling(true)
             .stick_to_bottom(true)
             .auto_shrink(false)
             .show(ui, |ui| {
                 for msg in self.messages.iter_mut() {
-                    ui.add(msg);
+                    match msg {
+                        MessageType::Message(msg) => {ui.add(msg);},
+                        MessageType::Notification(msg) => {ui.add(msg);},
+                        MessageType::Handshake(_) => {},
+                        MessageType::UserList(msg) => {
+                            self.users = msg.clone();
+                        },
+                    }
                 }
             });
         });
@@ -157,8 +164,8 @@ impl App {
     fn handle_connect(&mut self) {
         const TIMEOUT: Duration = Duration::new(5, 0);
 
-        let (tx_ui, rx_ui) = mpsc::channel::<Message>();
-        let (tx_net, rx_net) = mpsc::channel::<Message>();
+        let (tx_ui, rx_ui) = mpsc::channel::<MessageType>();
+        let (tx_net, rx_net) = mpsc::channel::<MessageType>();
         let socket = self.socket_addr.clone();
         
         // if no server is found
@@ -173,10 +180,18 @@ impl App {
             let _ = network::client(&socket, rx_ui, tx_net);
         });
 
+        
         self.tx = tx_ui;
         self.rx = rx_net;
         self.current_state = State::Chat;
+
+        thread::sleep(Duration::new(1, 0));
+        match self.tx.send(MessageType::Handshake(Handshake { user_name: self.user_name.clone()})) {
+            Ok(_) => {println!("handshake sent");},
+            Err(_) => {},
+        }
     }
+    
 
 }
 

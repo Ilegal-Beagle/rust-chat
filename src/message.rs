@@ -1,10 +1,13 @@
 use std::fmt;
 use serde::{Serialize, Deserialize};
+use std::collections::{HashMap};
 
+#[derive(Serialize, Deserialize, Debug)]
 pub enum MessageType {
-    Message,
-    Notification,
-    Handshake,
+    Message(Message),
+    Notification(Notification),
+    Handshake(Handshake),
+    UserList(HashMap<String, String>),
 }
 
 
@@ -50,22 +53,23 @@ impl egui::Widget for &mut Message {
     }
 }
 
-// // NOTIFICATION
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct Notification {
-//     pub message: String,
-// }
+// NOTIFICATION
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Notification {
+    pub message: String,
+}
 
-// impl egui::Widget for &mut Message {
-//     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-//         let response = ui.vertical(|ui| {
-//             ui.label(egui::RichText::new(&self.message).weak());
-//         });
-//     }
-// }
+impl egui::Widget for &mut Notification {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let response = ui.vertical(|ui| {
+            ui.label(egui::RichText::new(&self.message).weak());
+        }).response;
+        response
+    }
+}
 
-// // HANDSHAKE
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct Handshake {
-//     pub user_name: String,
-// }
+// HANDSHAKE
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Handshake {
+    pub user_name: String,
+}
