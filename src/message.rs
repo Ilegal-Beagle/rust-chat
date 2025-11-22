@@ -1,6 +1,12 @@
-use std::fmt;
-use serde::{Serialize, Deserialize};
-use std::collections::{HashMap};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::{
+    fmt,
+    net::TcpStream,
+    sync::{Arc, Mutex},
+};
+
+use crate::network;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum MessageType {
@@ -10,6 +16,39 @@ pub enum MessageType {
     UserList(HashMap<String, String>),
 }
 
+impl MessageType {
+    pub fn handle(
+        self,
+        user_list: &mut HashMap<String, String>,
+        clients: &Arc<Mutex<Vec<TcpStream>>>,
+    ) {
+        match self {
+            MessageType::Message(_) => {}
+            MessageType::Notification(_) => {}
+            MessageType::Handshake(handshake) => {
+                match user_list.contains_key(&handshake.user_name) {
+                    true => {
+                        user_list.remove(&handshake.user_name);
+                    }
+                    false => {
+                        user_list.insert(handshake.user_name, "".to_string());
+                    }
+                };
+
+                // create user list message
+                let list = MessageType::UserList(user_list.clone());
+                let mut serialized_msg = serde_json::to_string(&list).unwrap();
+                serialized_msg.push_str("\n");
+
+                // send to all clients
+                network::send_to_clients(clients, &serialized_msg).unwrap();
+
+                // send to clients
+            }
+            MessageType::UserList(_) => {}
+        }
+    }
+}
 
 // MESSAGE
 #[derive(Serialize, Deserialize, Debug)]
@@ -37,18 +76,20 @@ impl Default for Message {
 
 impl egui::Widget for &mut Message {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let response = ui.vertical(|ui| {
-            ui.label(egui::RichText::new(&self.user_name).weak().italics());
-            ui.label(&self.message);
-        }).response;
+        let response = ui
+            .vertical(|ui| {
+                ui.label(egui::RichText::new(&self.user_name).weak().italics());
+                ui.label(&self.message);
+            })
+            .response;
         if !self.image.is_empty() {
             ui.add(
                 egui::Image::from_bytes("bytes://image", self.image.clone())
-                .max_size(egui::vec2(250.0, 250.0))
-                .fit_to_exact_size(egui::vec2(250.0, 250.0))
+                    .max_size(egui::vec2(250.0, 250.0))
+                    .fit_to_exact_size(egui::vec2(250.0, 250.0)),
             );
         }
-        
+
         response
     }
 }
@@ -61,9 +102,11 @@ pub struct Notification {
 
 impl egui::Widget for &mut Notification {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let response = ui.vertical(|ui| {
-            ui.label(egui::RichText::new(&self.message).weak());
-        }).response;
+        let response = ui
+            .vertical(|ui| {
+                ui.label(egui::RichText::new(&self.message).weak());
+            })
+            .response;
         response
     }
 }

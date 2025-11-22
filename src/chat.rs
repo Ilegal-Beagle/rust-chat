@@ -175,7 +175,7 @@ impl App {
             });
         }
 
-        thread::sleep(Duration::new(1, 0));
+        thread::sleep(Duration::from_millis(50));
         thread::spawn(move || {
             let _ = network::client(&socket, rx_ui, tx_net);
         });
