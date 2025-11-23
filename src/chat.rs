@@ -1,7 +1,4 @@
 // ui.rs
-use crate::network;
-use crate::message::{MessageType, Message, Handshake};
-
 use std::{
     thread,
     fs::{read},
@@ -10,9 +7,11 @@ use std::{
     sync::{mpsc},
     collections::{HashMap},
 };
-
 use egui::{RichText};
 use egui_file_dialog::FileDialog;
+use uuid::Uuid;
+use crate::network::{helpers, server, client};
+use crate::message::{MessageType, Message, Handshake};
 
 enum State {
     Start,
@@ -31,6 +30,7 @@ pub struct App {
     file_dialog: FileDialog,
     socket_addr: SocketAddr,
     ip_str: String,
+    image_bytes: Vec<u8>,
 }
 
 impl App {
@@ -47,38 +47,25 @@ impl App {
             file_dialog: FileDialog::new(),
             socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127,0,0,1)), 7878),
             ip_str: "127.0.0.1:7878".to_string(),
+            image_bytes: Vec::<u8>::new(),
         }
     }
 
     fn render_chat(&mut self, ctx: &egui::Context) {
         
         match self.rx.try_recv() {
-            Ok(msg) => self.messages.push(msg),
+            Ok(msg) => {self.messages.push(msg);},
             Err(_) => {}
         }
 
         egui::TopBottomPanel::bottom("message_entry").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // ui.set_width(250.0);
-                let text_resp = ui.text_edit_singleline(&mut self.text);
+                let text_resp = ui.add(egui::TextEdit::singleline(&mut self.text)
+                    .desired_width(250.0)
+                    .hint_text("Type Here")
+                );
                 let send_button_resp = ui.button("send");
                 let image_button_resp= ui.button("add image");
-
-                // When enter is pressed in text box or send button is pressed
-                if (text_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                    || send_button_resp.clicked()
-                {
-                    self.tx
-                        .send(MessageType::Message(Message {
-                            user_name: self.user_name.clone(),
-                            message: self.text.clone(),
-                            image: Vec::<u8>::new(),
-                        }))
-                        .unwrap();
-
-                    self.text.clear();
-                }
-
 
                 // image handling
                 if image_button_resp.clicked() {
@@ -88,17 +75,27 @@ impl App {
                 self.file_dialog.update(ctx);
 
                 if let Some(path) = self.file_dialog.take_picked() {
-                    let p = path.to_str().unwrap();
-                    let image = read(p).expect("invalid file path");
-
-                    self.tx
-                    .send(MessageType::Message(Message {
-                        user_name: self.user_name.clone(),
-                        message: self.text.clone(),
-                        image: image,
-                    }))
-                    .unwrap();
+                    self.image_bytes = read(path.to_str().unwrap()).expect("invalid file path");
                 }
+
+                // When enter is pressed in text box or send button is pressed
+                if (text_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    || send_button_resp.clicked()
+                {
+                    let time = chrono::Local::now().format("%I:%M %p").to_string();
+                    self.tx
+                        .send(MessageType::Message(Message {
+                            user_name: self.user_name.clone(),
+                            message: self.text.clone(),
+                            image: self.image_bytes.clone(),
+                            timestamp: time,
+                            uuid: Uuid::new_v4().to_string(),
+                        }))
+                        .unwrap();
+
+                    self.text.clear();
+                }
+
 
             });
         });
@@ -109,7 +106,9 @@ impl App {
             .exact_width(100.0)
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("Users\n").weak());
+                    ui.heading(egui::RichText::new("Users"));
+                    ui.separator();
+
                     for (key, _) in &mut self.users {
                         ui.label(key);
                     }
@@ -118,7 +117,8 @@ impl App {
 
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("pibbles");
+            ui.heading("Chat Room");
+            ui.separator();
             egui::ScrollArea::vertical()
             .stick_to_bottom(true)
             .auto_shrink(false)
@@ -144,17 +144,16 @@ impl App {
 
                 ui.horizontal(|ui| {
                     ui.label("Username: ");
-                    ui.text_edit_singleline(&mut self.user_name);
+                    ui.add(egui::TextEdit::singleline(&mut self.user_name).desired_width(100.0));
                 });
 
                 ui.horizontal(|ui| {
                     ui.label("ip and port: ");
-                    ui.text_edit_singleline(&mut self.ip_str);
+                    ui.add(egui::TextEdit::singleline(&mut self.ip_str).desired_width(100.0));
                 });
 
                 if ui.button("Enter").clicked()  {
                     self.socket_addr = self.ip_str.as_str().parse().expect("cant");
-                    println!("{:?}", self.socket_addr);
                     self.current_state = State::Connect;
                 }
             });
@@ -169,15 +168,15 @@ impl App {
         let socket = self.socket_addr.clone();
         
         // if no server is found
-        if !network::try_connect(&socket, TIMEOUT) {
+        if !helpers::try_connect(&socket, TIMEOUT) {
             thread::spawn( move || {
-                let _ = network::server(&socket);
+                let _ = server::server(&socket);
             });
         }
 
         thread::sleep(Duration::from_millis(50));
         thread::spawn(move || {
-            let _ = network::client(&socket, rx_ui, tx_net);
+            let _ = client::client(&socket, rx_ui, tx_net);
         });
 
         
@@ -187,7 +186,7 @@ impl App {
 
         thread::sleep(Duration::new(1, 0));
         match self.tx.send(MessageType::Handshake(Handshake { user_name: self.user_name.clone()})) {
-            Ok(_) => {println!("handshake sent");},
+            Ok(_) => {},
             Err(_) => {},
         }
     }

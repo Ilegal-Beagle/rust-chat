@@ -1,12 +1,10 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::{
-    fmt,
-    net::TcpStream,
-    sync::{Arc, Mutex},
+    collections::HashMap, fmt::{self, Debug}, net::TcpStream, sync::{Arc, Mutex}
 };
+use serde::{Deserialize, Serialize};
+use crate::network::{helpers};
+use uuid::Uuid;
 
-use crate::network;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum MessageType {
@@ -23,7 +21,7 @@ impl MessageType {
         clients: &Arc<Mutex<Vec<TcpStream>>>,
     ) {
         match self {
-            MessageType::Message(_) => {}
+            MessageType::Message(_) => {},
             MessageType::Notification(_) => {}
             MessageType::Handshake(handshake) => {
                 match user_list.contains_key(&handshake.user_name) {
@@ -41,9 +39,7 @@ impl MessageType {
                 serialized_msg.push_str("\n");
 
                 // send to all clients
-                network::send_to_clients(clients, &serialized_msg).unwrap();
-
-                // send to clients
+                helpers::send_to_clients(clients, &serialized_msg).unwrap();
             }
             MessageType::UserList(_) => {}
         }
@@ -56,11 +52,13 @@ pub struct Message {
     pub user_name: String,
     pub message: String,
     pub image: Vec<u8>,
+    pub timestamp: String,
+    pub uuid: String,
 }
 
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "User: {}\nMessage: {}", self.user_name, self.message)
+        write!(f, "User: {}\nMessage: {}\nHas Image: {:?}", self.user_name, self.message, self.image)
     }
 }
 
@@ -70,6 +68,8 @@ impl Default for Message {
             user_name: "default".to_owned(),
             message: "default message".to_owned(),
             image: Vec::<u8>::new(),
+            timestamp: chrono::Local::now().to_string(),
+            uuid: Uuid::new_v4().to_string(),
         }
     }
 }
@@ -78,17 +78,22 @@ impl egui::Widget for &mut Message {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         let response = ui
             .vertical(|ui| {
-                ui.label(egui::RichText::new(&self.user_name).weak().italics());
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&self.user_name).strong().italics());
+                    ui.label(egui::RichText::new(&self.timestamp).weak().italics());
+                });
                 ui.label(&self.message);
             })
             .response;
-        if !self.image.is_empty() {
-            ui.add(
-                egui::Image::from_bytes("bytes://image", self.image.clone())
-                    .max_size(egui::vec2(250.0, 250.0))
-                    .fit_to_exact_size(egui::vec2(250.0, 250.0)),
-            );
-        }
+                if !self.image.is_empty() {
+                    ui.add(
+                        egui::Image::from_bytes(
+                        format!("bytes://{}", self.uuid),
+                        self.image.clone())
+                            .max_size(egui::vec2(250.0, 250.0))
+                            .fit_to_exact_size(egui::vec2(250.0, 250.0)),
+                    );
+                }
 
         response
     }

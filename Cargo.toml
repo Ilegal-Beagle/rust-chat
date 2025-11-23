@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+base64 = "0.22.1"
+chrono = "0.4.42"
 eframe = "0.33.0"
 egui = "0.33.0"
 egui-file-dialog = "0.12.0"
@@ -11,3 +13,4 @@ egui_extras = { version = "*", features = ["all_loaders"] }
 image = { version = "*", features = ["jpeg", "png"] }
 serde = "1.0.228"
 serde_json = "1.0.145"
+uuid = {version = "1.18.1", features = ["v4",]}
