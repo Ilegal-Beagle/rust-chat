@@ -23,13 +23,11 @@ pub fn client(
         // receive repsonse from server and send it to UI
         if let Ok(msg) = get_message(&mut stream) {
             tx_net.send(msg)?;
-            println!("got message from server and sent it to ui");
         }
 
         // get client message from UI
         if let Ok(msg) = rx_ui.try_recv() {
             send_message(&mut stream, msg)?;
-            println!("got messagr from UI and sent it to the server");
         }
     }
 }
