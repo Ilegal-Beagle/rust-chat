@@ -2,7 +2,7 @@
 use std::{
     thread,
     fs::{read},
-    net::{SocketAddr, IpAddr, Ipv4Addr},
+    net::{SocketAddr},
     time::{Duration},
     sync::{mpsc},
     collections::{HashMap},
@@ -12,6 +12,8 @@ use egui_file_dialog::FileDialog;
 use uuid::Uuid;
 use crate::network::{helpers, server, client};
 use crate::message::{MessageType, Message, Handshake};
+use local_ip_address::local_ip;
+
 
 enum State {
     Start,
@@ -36,6 +38,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
+        let sock = SocketAddr::new(local_ip().unwrap(), 5000);
         Self {
             user_name: "Default".to_string(),
             text: "".to_owned(),
@@ -45,8 +48,8 @@ impl App {
             rx: rx,
             current_state: State::Start,
             file_dialog: FileDialog::new(),
-            socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127,0,0,1)), 7878),
-            ip_str: "127.0.0.1:7878".to_string(),
+            socket_addr: sock,
+            ip_str: sock.to_string(),
             image_bytes: Vec::<u8>::new(),
         }
     }
@@ -153,8 +156,15 @@ impl App {
                 });
 
                 if ui.button("Enter").clicked()  {
-                    self.socket_addr = self.ip_str.as_str().parse().expect("cant");
-                    self.current_state = State::Connect;
+                    match self.ip_str.as_str().parse() {
+                        Ok(ip) => {
+                            self.socket_addr = ip;
+                            self.current_state = State::Connect;
+                        },
+                        Err(e) => {
+                            println!("{e}");
+                        },
+                    }
                 }
             });
         });

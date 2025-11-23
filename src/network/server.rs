@@ -3,7 +3,6 @@ use std::{
     error::Error,
     io::{self, BufReader, prelude::*},
     net::{SocketAddr, TcpListener, TcpStream},
-    str,
     sync::{Arc, Mutex,},
     thread,
 };

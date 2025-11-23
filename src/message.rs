@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::network::{helpers};
 use uuid::Uuid;
 
-
 #[derive(Serialize, Deserialize, Debug)]
 pub enum MessageType {
     Message(Message),
