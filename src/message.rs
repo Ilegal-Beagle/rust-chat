@@ -97,7 +97,9 @@ impl egui::Widget for &mut Message {
                     ui.label(egui::RichText::new(&self.user_name).strong().italics());
                     ui.label(egui::RichText::new(&self.timestamp).weak().italics());
                 });
-                ui.label(&self.message);
+                ui.label(
+                    egui::RichText::new(&self.message)
+                );
             });
         })
             .response;

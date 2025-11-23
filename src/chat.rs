@@ -136,13 +136,8 @@ impl App {
                     }
                 });
 
-                ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                    let gif_resp = ui.button("gifs");
+                ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
                     let emoji_resp = ui.button("emojis");
-
-                    if gif_resp.clicked() {
-                        todo!();
-                    };
 
                     // emoji popup menu
                     egui::Popup::menu(&emoji_resp)
@@ -160,11 +155,15 @@ impl App {
                                     .spacing(vec2(1.0, 1.0))
                                     .show(ui, |ui| {
                                         for i in 1..75 {
+                                            
                                             if i % 3 == 1 {
                                                 ui.end_row();
                                             }
+                                            
                                             let emoji = char::from_u32(0x1F600+i).unwrap();
-                                            if ui.button(emoji.to_string()).clicked() {
+                                            let button_text = egui::RichText::new(emoji.to_string())
+                                                .size(30.0);
+                                            if ui.button(button_text).clicked() {
                                                 self.text.push(emoji);
                                             }
                                         }
