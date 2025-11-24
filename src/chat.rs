@@ -10,7 +10,7 @@ use std::{
 use egui::{Align, Layout, RichText, vec2};
 use egui_file_dialog::FileDialog;
 use uuid::Uuid;
-use crate::network::{helpers, server, client};
+use crate::{message::Notification, network::{client, helpers, server}};
 use crate::message::{MessageType, Message, Handshake};
 use local_ip_address::local_ip;
 
@@ -270,6 +270,14 @@ impl App {
 
         thread::sleep(Duration::new(1, 0));
         match self.tx.send(MessageType::Handshake(Handshake { user_name: self.user_name.clone()})) {
+            Ok(_) => {},
+            Err(_) => {},
+        };
+
+        match self.tx.send(
+            MessageType::Notification(
+                Notification { message: format!("{} has joined the chat", self.user_name) }
+        )) {
             Ok(_) => {},
             Err(_) => {},
         }
