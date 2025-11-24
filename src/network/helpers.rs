@@ -6,6 +6,7 @@ use std::{
     str,
     sync::{Arc, Mutex},
     time::Duration,
+    collections::HashMap,
 };
 
 use crate::message::MessageType;
@@ -18,9 +19,8 @@ pub fn try_connect(address: &SocketAddr, timeout: Duration) -> bool {
 }
 
 // gets message from TCP, converts it to Message and returns it
-pub fn get_message(stream: &mut TcpStream) -> Result<MessageType, Box<dyn Error>> {
+pub fn get_message(reader: &mut BufReader<TcpStream>) -> Result<MessageType, Box<dyn Error>> {
     let mut buf = Vec::new();
-    let mut reader = BufReader::new(stream);
     reader.read_until(b'\n', &mut buf)?;
     let message = str::from_utf8(&buf)?;
 
@@ -38,7 +38,7 @@ pub fn send_message(stream: &mut TcpStream, message: MessageType) -> Result<(), 
 }
 
 pub fn send_to_clients(
-    clients: &Arc<Mutex<Vec<TcpStream>>>,
+    clients: &Arc<Mutex<HashMap<SocketAddr, TcpStream>>>,
     message: &str,
 ) -> Result<(), Box<dyn Error + 'static>> {
     Ok({
@@ -47,8 +47,8 @@ pub fn send_to_clients(
             Err(poisoned) => poisoned.into_inner(),
         };
 
-        for client in clients.iter_mut() {
-            client.write_all(message.as_bytes())?;
+        for (_, stream) in clients.iter_mut() {
+            stream.write_all(message.as_bytes())?;
         }
     })
 }

@@ -1,5 +1,8 @@
 use std::{
-    collections::HashMap, fmt::{self, Debug}, net::TcpStream, sync::{Arc, Mutex}
+    collections::HashMap,
+    fmt::{self, Debug},
+    net::{TcpStream, SocketAddr},
+    sync::{Arc, Mutex}
 };
 use serde::{Deserialize, Serialize};
 use crate::network::{helpers};
@@ -11,13 +14,14 @@ pub enum MessageType {
     Notification(Notification),
     Handshake(Handshake),
     UserList(HashMap<String, String>),
+    Disconnect(Disconnect),
 }
 
 impl MessageType {
     pub fn handle(
         self,
         user_list: &mut HashMap<String, String>,
-        clients: &Arc<Mutex<Vec<TcpStream>>>,
+        clients: &Arc<Mutex<HashMap<SocketAddr, TcpStream>>>,
     ) {
         match self {
             MessageType::Message(_) => {},
@@ -40,7 +44,24 @@ impl MessageType {
                 // send to all clients
                 helpers::send_to_clients(clients, &serialized_msg).unwrap();
             }
-            MessageType::UserList(_) => {}
+            MessageType::UserList(_) => {},
+            MessageType::Disconnect(disconnect) => {
+                match user_list.contains_key(&disconnect.user_name) {
+                    true => {
+                        user_list.remove(&disconnect.user_name);
+                    }
+                    false => {}
+                };
+
+                // create user list message
+                let list = MessageType::UserList(user_list.clone());
+                let mut serialized_msg = serde_json::to_string(&list).unwrap();
+                serialized_msg.push_str("\n");
+
+                // send to all clients
+                helpers::send_to_clients(clients, &serialized_msg).unwrap();
+
+            },
         }
     }
 }
@@ -132,4 +153,11 @@ impl egui::Widget for &mut Notification {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Handshake {
     pub user_name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+// DISCONNECT
+pub struct Disconnect {
+    pub user_name: String,
+    pub ip: String,
 }

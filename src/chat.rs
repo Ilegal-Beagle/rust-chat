@@ -11,7 +11,7 @@ use egui::{Align, Layout, RichText, vec2};
 use egui_file_dialog::FileDialog;
 use uuid::Uuid;
 use crate::{message::Notification, network::{client, helpers, server}};
-use crate::message::{MessageType, Message, Handshake};
+use crate::message::{MessageType, Message, Handshake, Disconnect};
 use local_ip_address::local_ip;
 
 
@@ -72,8 +72,10 @@ impl App {
 
     fn render_chat(&mut self, ctx: &egui::Context) {
         
+        // recieve message from client part
         match self.rx.try_recv() {
-            Ok(msg) => {self.messages.push(msg);},
+            Ok(msg) => {
+                self.messages.push(msg);},
             Err(_) => {}
         }        
 
@@ -120,7 +122,6 @@ impl App {
 
             });
         });
-
 
         egui::SidePanel::right("user_panel")
             .resizable(false)
@@ -189,6 +190,7 @@ impl App {
                         MessageType::UserList(msg) => {
                             self.users = msg.clone();
                         },
+                        MessageType::Disconnect(_) => {},
                     }
                 }
             });
@@ -283,6 +285,26 @@ impl App {
         }
     }
     
+    fn handle_disconnect(&mut self) {
+        match self.tx.send(MessageType::Disconnect(
+            Disconnect { user_name: self.user_name.clone(), ip: self.ip_str.clone(), },
+        )) {
+            Ok(_) => {},
+            Err(_) => {},
+        }
+
+
+        thread::sleep(Duration::new(1,0));
+        
+        match self.tx.send(MessageType::Notification(
+            Notification {message: format!("{} has left the chat", self.user_name)}
+        )) {
+            Ok(_) => {},
+            Err(_) => {},
+        }
+        
+        thread::sleep(Duration::new(1, 0));
+    }
 
 }
 
@@ -293,5 +315,9 @@ impl eframe::App for App {
             State::Chat => self.render_chat(ctx),
             State::Connect => self.handle_connect(),
         }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.handle_disconnect();
     }
 }

@@ -1,4 +1,5 @@
 use std::{
+    io::{BufReader},
     net::{SocketAddr, TcpStream},
     sync::{mpsc::{Sender, Receiver}},
     error::Error,
@@ -16,12 +17,20 @@ pub fn client(
     tx_net: Sender<MessageType>,
 ) -> Result<(), Box<dyn Error>> {
     let mut stream = TcpStream::connect(&socket)?;
-    stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    stream.set_read_timeout(Some(Duration::new(3,0)))?;
     println!("connected to server.");
 
     loop {
         // receive repsonse from server and send it to UI
-        if let Ok(msg) = get_message(&mut stream) {
+        if let Ok(msg) = get_message(&mut reader) {
+            match msg {
+                MessageType::Message(_) => println!("message"),
+                MessageType::Notification(_) => println!("notif"),
+                MessageType::UserList(_) => println!("user list"),
+                MessageType::Disconnect(..) => println!("disconnect"),
+                MessageType::Handshake(_) => println!("handshake"),
+            }
             tx_net.send(msg)?;
         }
 
@@ -30,4 +39,6 @@ pub fn client(
             send_message(&mut stream, msg)?;
         }
     }
+
+
 }
