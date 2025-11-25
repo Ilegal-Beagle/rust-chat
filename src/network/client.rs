@@ -1,44 +1,87 @@
 use std::{
-    io::{BufReader},
-    net::{SocketAddr, TcpStream},
-    sync::{mpsc::{Sender, Receiver}},
     error::Error,
-    time::Duration,
+    net::SocketAddr,
 };
 use crate::{
     message::MessageType,
     network::helpers::{send_message, get_message},
 };
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream,
+    sync::mpsc::{Sender, Receiver},
+};
 
-// does the client functions. gets a message from user and sends and reveives it back from server.
-pub fn client(
+#[tokio::main]
+pub async fn client(
     socket: &SocketAddr,
-    rx_ui: Receiver<MessageType>,
     tx_net: Sender<MessageType>,
+    rx_ui: Receiver<MessageType>
 ) -> Result<(), Box<dyn Error>> {
-    let mut stream = TcpStream::connect(&socket)?;
-    let mut reader = BufReader::new(stream.try_clone()?);
-    stream.set_read_timeout(Some(Duration::new(3,0)))?;
-    println!("connected to server.");
+
+    let mut stream = TcpStream::connect(&socket).await?;
+    let mut reader = BufReader::new(stream);
+    let mut buf = String::new();
 
     loop {
-        // receive repsonse from server and send it to UI
-        if let Ok(msg) = get_message(&mut reader) {
-            match msg {
-                MessageType::Message(_) => println!("message"),
-                MessageType::Notification(_) => println!("notif"),
-                MessageType::UserList(_) => println!("user list"),
-                MessageType::Disconnect(..) => println!("disconnect"),
-                MessageType::Handshake(_) => println!("handshake"),
-            }
-            tx_net.send(msg)?;
-        }
+        tokio::select! {
+            
+            // recieve from server
+            result = reader.read_line(&mut buf) => {
+                match result {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let deserialized_msg: MessageType = match serde_json::from_str(&buf) {
+                            Ok(msg) => {msg},
+                            Err(e) => {
+                                eprintln!("failed to deserialize msg: {}", e);
+                                buf.clear();
+                                continue;
+                            },
+                        };
 
-        // get client message from UI
-        if let Ok(msg) = rx_ui.try_recv() {
-            send_message(&mut stream, msg)?;
+                        match tx_net.send(deserialized_msg).await {
+                            Ok(_) => {},
+                            Err(e) => {
+                                eprintln!("failed to send to UI: {}", e);
+                                panic!();
+                            }
+                        };
+
+                        buf.clear();
+                    },
+                    Err(e) => {
+                        eprintln!("Network read error: {}", e);
+                    },
+                }
+            }
+
+            // recieve from UI
+            msg_opt = rx_ui.recv().await => {
+                match msg_opt {
+                    Some(msg) => {
+                        // Successfully received a message from the UI task
+                        if let Err(e) = send_message_async(&mut stream, msg).await {
+                            eprintln!("Failed to send message to server: {}", e);
+                            break;
+                        }
+                    }
+                    None => {
+                        // The UI's Sender has been dropped, so the client should shut down
+                        println!("UI task disconnected. Shutting down client.");
+                        break;
+                    }
+                }
+            }
         }
     }
 
+    Ok(())
+}
 
+async fn send_message_async(stream: &mut TcpStream, msg: MessageType) -> Result<(), Box<dyn Error>> {
+    let serialized = serde_json::to_string(&msg)?;
+    stream.write_all(serialized.as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    Ok(())
 }

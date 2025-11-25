@@ -4,8 +4,12 @@ use std::{
     fs::{read},
     net::{SocketAddr},
     time::{Duration},
-    sync::{mpsc},
+    // sync::{mpsc},
     collections::{HashMap},
+};
+use tokio::{
+    sync::mpsc,
+    runtime::Handle,
 };
 use egui::{Align, Layout, RichText, vec2};
 use egui_file_dialog::FileDialog;
@@ -40,7 +44,7 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel(128);
         let sock = SocketAddr::new(local_ip().unwrap(), 5000);
         let paths = vec![
             "file://assets/2000c.png".to_string(),
@@ -104,8 +108,7 @@ impl App {
                     || send_button_resp.clicked()
                 {
                     let time = chrono::Local::now().format("%I:%M %p").to_string();
-                    self.tx
-                        .send(MessageType::Message(Message {
+                    let msg = MessageType::Message(Message {
                             user_name: self.user_name.clone(),
                             profile_picture: self.profile_picture.clone(),
                             message: self.text.clone(),
@@ -113,9 +116,15 @@ impl App {
                             timestamp: time,
                             uuid: Uuid::new_v4().to_string(),
                             uuid_profile_picture: Uuid::new_v4().to_string(),
-                        }))
-                        .unwrap();
+                    });
 
+                    let tx_clone = self.tx.clone();
+                    match Handle::current().block_on(tx_clone.send(msg)) {
+                        Ok(_) => {},
+                        Err(e) => {
+                            eprintln!("error sending message to network: {}", e);
+                        }
+                    }
                     self.text.clear();
                     self.image_bytes.clear();
                 }
@@ -249,8 +258,8 @@ impl App {
     fn handle_connect(&mut self) {
         const TIMEOUT: Duration = Duration::new(5, 0);
 
-        let (tx_ui, rx_ui) = mpsc::channel::<MessageType>();
-        let (tx_net, rx_net) = mpsc::channel::<MessageType>();
+        let (tx_ui, rx_ui) = mpsc::channel::<MessageType>(128);
+        let (tx_net, rx_net) = mpsc::channel::<MessageType>(128);
         let socket = self.socket_addr.clone();
         
         // if no server is found
@@ -270,40 +279,46 @@ impl App {
         self.rx = rx_net;
         self.current_state = State::Chat;
 
-        thread::sleep(Duration::new(1, 0));
-        match self.tx.send(MessageType::Handshake(Handshake { user_name: self.user_name.clone()})) {
-            Ok(_) => {},
-            Err(_) => {},
-        };
-
-        match self.tx.send(
-            MessageType::Notification(
-                Notification { message: format!("{} has joined the chat", self.user_name) }
-        )) {
-            Ok(_) => {},
-            Err(_) => {},
+        let mut messages: Vec<MessageType> = Vec::new();
+        messages.push(MessageType::Handshake(Handshake { user_name: self.user_name.clone()}));
+        messages.push(MessageType::Notification(
+            Notification { message: format!("{} has joined the chat", self.user_name)
+        }));
+        
+        let tx_clone = self.tx.clone();
+        for msg in messages.iter() {
+            thread::sleep(Duration::new(1, 0));
+            match Handle::current().block_on(tx_clone.send(*msg)) {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("error sending message to network: {}", e);
+                }
+            }
         }
+
     }
     
     fn handle_disconnect(&mut self) {
-        match self.tx.send(MessageType::Disconnect(
-            Disconnect { user_name: self.user_name.clone(), ip: self.ip_str.clone(), },
-        )) {
-            Ok(_) => {},
-            Err(_) => {},
-        }
-
-
-        thread::sleep(Duration::new(1,0));
         
-        match self.tx.send(MessageType::Notification(
+        let mut messages: Vec<MessageType> = Vec::new();
+        messages.push(MessageType::Disconnect(
+            Disconnect { user_name: self.user_name.clone(), ip: self.ip_str.clone()}
+        ));
+        messages.push(MessageType::Notification(
             Notification {message: format!("{} has left the chat", self.user_name)}
-        )) {
-            Ok(_) => {},
-            Err(_) => {},
+        ));
+
+        let tx_clone = self.tx.clone();
+        for msg in messages.iter() {
+            thread::sleep(Duration::new(1, 0));
+            match Handle::current().block_on(tx_clone.send(*msg)) {
+                Ok(_) => {},
+                Err(e   ) => {
+                    eprintln!("Error sending message to network: {}", e)
+                }
+            }
         }
         
-        thread::sleep(Duration::new(1, 0));
     }
 
 }
