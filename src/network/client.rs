@@ -1,26 +1,30 @@
 use std::{
     error::Error,
-    net::SocketAddr,
 };
 use crate::{
-    message::MessageType,
-    network::helpers::{send_message, get_message},
+    message::MessageType, network::helpers,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::TcpStream,
-    sync::mpsc::{Sender, Receiver},
+    io::{
+        AsyncBufReadExt,
+        BufReader,
+        split,
+    },
+    net::{TcpStream},
+    sync::mpsc::{Receiver, Sender},
 };
 
-#[tokio::main]
 pub async fn client(
-    socket: &SocketAddr,
+    // socket: &SocketAddr,
+    stream: TcpStream,
     tx_net: Sender<MessageType>,
-    rx_ui: Receiver<MessageType>
+    mut rx_ui: Receiver<MessageType>
 ) -> Result<(), Box<dyn Error>> {
 
-    let mut stream = TcpStream::connect(&socket).await?;
-    let mut reader = BufReader::new(stream);
+    // let stream = TcpStream::connect(&socket).await?;
+    println!("client created: {:?}", stream);
+    let (reader, mut writer) = split(stream);
+    let mut reader = BufReader::new(reader);
     let mut buf = String::new();
 
     loop {
@@ -40,13 +44,7 @@ pub async fn client(
                             },
                         };
 
-                        match tx_net.send(deserialized_msg).await {
-                            Ok(_) => {},
-                            Err(e) => {
-                                eprintln!("failed to send to UI: {}", e);
-                                panic!();
-                            }
-                        };
+                        tx_net.send(deserialized_msg).await?;
 
                         buf.clear();
                     },
@@ -57,14 +55,14 @@ pub async fn client(
             }
 
             // recieve from UI
-            msg_opt = rx_ui.recv().await => {
+            msg_opt = rx_ui.recv() => {
                 match msg_opt {
                     Some(msg) => {
                         // Successfully received a message from the UI task
-                        if let Err(e) = send_message_async(&mut stream, msg).await {
-                            eprintln!("Failed to send message to server: {}", e);
-                            break;
-                        }
+                        match helpers::send_message(&mut writer, msg).await {
+                            Ok(_) => {println!("message sent")},
+                            Err(e) => {eprintln!("error sending message to server: {}", e)},
+                        };
                     }
                     None => {
                         // The UI's Sender has been dropped, so the client should shut down
@@ -76,12 +74,5 @@ pub async fn client(
         }
     }
 
-    Ok(())
-}
-
-async fn send_message_async(stream: &mut TcpStream, msg: MessageType) -> Result<(), Box<dyn Error>> {
-    let serialized = serde_json::to_string(&msg)?;
-    stream.write_all(serialized.as_bytes()).await?;
-    stream.write_all(b"\n").await?;
     Ok(())
 }

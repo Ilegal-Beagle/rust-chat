@@ -1,14 +1,19 @@
 use std::{
     collections::HashMap,
     fmt::{self, Debug},
-    net::{TcpStream, SocketAddr},
-    sync::{Arc, Mutex}
+    net::SocketAddr,
+    sync::Arc
+};
+use tokio::{
+    net::TcpStream,
+    io::WriteHalf,
+    sync::Mutex,
 };
 use serde::{Deserialize, Serialize};
 use crate::network::{helpers};
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum MessageType {
     Message(Message),
     Notification(Notification),
@@ -21,7 +26,7 @@ impl MessageType {
     pub fn handle(
         self,
         user_list: &mut HashMap<String, String>,
-        clients: &Arc<Mutex<HashMap<SocketAddr, TcpStream>>>,
+        clients: &Arc<Mutex<HashMap<SocketAddr, WriteHalf<TcpStream>>>>,
     ) {
         match self {
             MessageType::Message(_) => {},
@@ -38,11 +43,14 @@ impl MessageType {
 
                 // create user list message
                 let list = MessageType::UserList(user_list.clone());
-                let mut serialized_msg = serde_json::to_string(&list).unwrap();
-                serialized_msg.push_str("\n");
 
-                // send to all clients
-                helpers::send_to_clients(clients, &serialized_msg).unwrap();
+                let mut clients_clone = Arc::clone(clients);
+                tokio::spawn(async move {
+                    match helpers::send_to_clients(&mut clients_clone, list).await {
+                        Ok(_) => {},
+                        Err(e) => eprintln!("Error sending to clients: {}", e),
+                    };
+                });
             }
             MessageType::UserList(_) => {},
             MessageType::Disconnect(disconnect) => {
@@ -55,11 +63,16 @@ impl MessageType {
 
                 // create user list message
                 let list = MessageType::UserList(user_list.clone());
-                let mut serialized_msg = serde_json::to_string(&list).unwrap();
-                serialized_msg.push_str("\n");
 
-                // send to all clients
-                helpers::send_to_clients(clients, &serialized_msg).unwrap();
+                let mut clients_clone = Arc::clone(clients);
+                tokio::spawn(async move {
+                    match helpers::send_to_clients(&mut clients_clone, list).await {
+                        Ok(_) => {},
+                        Err(e) => {
+                            eprintln!("Error sending to clients: {}", e);
+                        },
+                    };
+                });
 
             },
         }
@@ -67,7 +80,7 @@ impl MessageType {
 }
 
 // MESSAGE
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
     pub user_name: String,
     pub profile_picture: Vec<u8>,
@@ -133,7 +146,7 @@ impl egui::Widget for &mut Message {
 }
 
 // NOTIFICATION
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Notification {
     pub message: String,
 }
@@ -150,12 +163,12 @@ impl egui::Widget for &mut Notification {
 }
 
 // HANDSHAKE
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Handshake {
     pub user_name: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 // DISCONNECT
 pub struct Disconnect {
     pub user_name: String,

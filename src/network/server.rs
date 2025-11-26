@@ -1,133 +1,84 @@
 use std::{
     collections::HashMap,
     error::Error,
-    io::{self, prelude::*},
     net::{SocketAddr},
-    sync::{Arc, Mutex},
-    thread,
+    sync::{Arc},
 };
-use tokio::{io::AsyncWriteExt, net::{TcpListener, TcpStream}};
-use tokio::io::{AsyncReadExt, AsyncBufReadExt, BufReader};
-use crate::{message::MessageType, network::{helpers::send_to_clients, server}};
-
-// pub fn handle_connection(
-//     stream: TcpStream,
-//     clients: Arc<Mutex<HashMap<SocketAddr, TcpStream>>>,
-//     names: Arc<Mutex<HashMap<String, String>>>,
-// ) -> Result<(), Box<dyn Error>> {
-
-//     let mut buf = Vec::new();
-//     let mut reader = BufReader::new(stream.try_clone()?);
-
-//     loop {
-//         match reader.read_until(b'\n', &mut buf) {
-//             Ok(0) => break,
-
-//             Ok(_) => {
-//                 let message = std::str::from_utf8(&buf)?;
-//                 let deserialized_msg: MessageType = serde_json::from_str(message)?;
-
-//                 {
-//                     let mut user_list = names.lock().unwrap_or_else(|p| p.into_inner());
-//                     deserialized_msg.handle(&mut user_list, &clients);
-//                 }
-
-//                 send_to_clients(&clients, message)?;
-//                 buf.clear();
-//             }
-
-//             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-
-//             Err(ref e)
-//                 if e.kind() == io::ErrorKind::ConnectionReset
-//                 || e.kind() == io::ErrorKind::ConnectionAborted => break,
-
-//             Err(e) => return Err(Box::new(e)),
-//         }
-//     }
-
-
-//     remove_client(stream, clients);
-
-//     Ok(())
-// }
-
-
-// // takes in a tcpstream and removes it from client list
-// fn remove_client(stream: TcpStream, clients: Arc<Mutex<HashMap<SocketAddr, TcpStream>>>) {
-//     let peer = match stream.peer_addr() {
-//         Ok(p) => p,
-//         Err(_) => return, // can't identify client
-//     };
-
-//     let mut clients = match clients.lock() {
-//         Ok(c) => c,
-//         Err(poisoned) => poisoned.into_inner(),
-//     };
-
-//     clients.remove(&peer);
-// }
-
-// pub fn server(socket: &SocketAddr) -> Result<(), Box<dyn Error>> {
-//     let listener = TcpListener::bind(&socket).await?;
-//     // let clients = Arc::new(Mutex::new(Vec::<TcpStream>::new()));
-//     let clients = Arc::new(Mutex::new(HashMap::<SocketAddr, TcpStream>::new()));
-//     let client_names = Arc::new(Mutex::new(HashMap::<String, String>::new()));
-//     println!("Started listening on port 7878");
-
-//     for stream in listener.incoming() {
-//         let stream = stream?;
-
-//         { // start lock
-//             let mut c = clients.lock().unwrap();
-//             let addr = stream.peer_addr()?;
-//             c.insert(addr, stream.try_clone()?);
-//         } // end lock
-
-//         let client_copy = Arc::clone(&clients);
-//         let name_copy = Arc::clone(&client_names);
-
-//         thread::spawn(|| {
-//             let _ = handle_connection(stream, client_copy, name_copy);
-//         });
-//     }
-//     Ok(())
-// }
+use tokio::{
+    io::{
+        AsyncBufReadExt,
+        BufReader,
+        WriteHalf,
+        ReadHalf,
+    }, 
+    net::{TcpListener, TcpStream},
+    sync::Mutex,
+};
+use crate::{message::MessageType, network::helpers::send_to_clients};
 
 pub async fn server(socket: &SocketAddr) -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(socket).await.unwrap();
+    let clients = Arc::new(Mutex::new(HashMap::<SocketAddr, WriteHalf<TcpStream>>::new()));
+    let user_names = Arc::new(Mutex::new(HashMap::<String, String>::new()));
+    println!("now accepting clients");
 
     loop {
-        let (mut socket, addr) = listener.accept().await.unwrap();
-        tokio::spawn(async move {
-            let mut buf = [0; 128];
+        let (stream, socket) = listener.accept().await.unwrap();
+        let (reader, writer) = tokio::io::split(stream);
 
-            loop {
-                let n = match socket.read(&mut buf).await {
-                    Ok(0) => {
-                        println!("Connection closed by client: {}", addr);
-                        return;
-                    }
-                    Ok(n) => n,
+        {
+            let mut clients = clients.lock().await;
+            clients.insert(socket, writer);
+        }
+
+        let clients_clone = Arc::clone(&clients);
+        let name_clone = Arc::clone(&user_names);
+
+        tokio::spawn(async move {
+            println!("client {:?} now being SERVED", socket);
+            handle_connection(reader, clients_clone, name_clone).await;
+        });
+    }
+}
+
+async fn handle_connection(
+    reader: ReadHalf<TcpStream>,
+    clients: Arc<Mutex<HashMap::<SocketAddr, WriteHalf<TcpStream>>>>,
+    names: Arc<Mutex<HashMap<String, String>>>) {
+    let mut reader = BufReader::new(reader);
+    let mut buf: Vec<u8> = Vec::new();
+
+    loop {
+        tokio::select! {
+            res = reader.read_until(b'\n', &mut buf) => {
+                match res {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let msg = std::str::from_utf8(&buf).unwrap();
+                        let deserialized_msg: MessageType = serde_json::from_str(&msg).unwrap();
+                        let msg_cpy = deserialized_msg.clone();
+        
+                        {
+                            let mut user_list = names.lock().await;
+                            deserialized_msg.handle(&mut user_list, &clients);
+                        }
+        
+                        let mut clients_clone = Arc::clone(&clients);
+                        match send_to_clients(&mut clients_clone, msg_cpy).await {
+                            Ok(_) => {},
+                            Err(e) => {
+                                eprintln!("Error sending to multiple clients: {}", e);
+                            },
+                        };
+                        buf.clear();
+                    },
 
                     Err(e) => {
-                        eprintln!("Failed to read from socket {}: {}", addr, e);
-                        return;
-                    }
+                        eprintln!("Error in reading from client: {}", e);
+                        continue;
+                    },
                 };
-
-                if let Ok(s) = String::from_utf8(buf[..n].to_vec()) {
-                    print!("Received from {}: {}", addr, s);
-                } else {
-                    println!("Received {} bytes of non-UTF8 data from {}", n, addr);
-                }
-
-
-                if let Err(e) = socket.write_all(&buf[..n]).await {
-                    eprintln!("Failed to write to socket {}: {}", addr, e);
-                    return;
-                }
             }
-        });
+        }
     }
 }

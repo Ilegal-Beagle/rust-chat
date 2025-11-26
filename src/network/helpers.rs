@@ -1,54 +1,45 @@
 // network.rs
 use std::{
     error::Error,
-    io::{BufReader, prelude::*},
-    net::{SocketAddr, TcpStream},
-    str,
-    sync::{Arc, Mutex},
-    time::Duration,
+    net::{SocketAddr},
     collections::HashMap,
+    sync::Arc,
+};
+use tokio::{
+    io::{
+        AsyncWrite,
+        AsyncWriteExt,
+        WriteHalf,
+    },
+    net::{TcpStream},
+    sync::Mutex,
 };
 
-use crate::message::MessageType;
-
-pub fn try_connect(address: &SocketAddr, timeout: Duration) -> bool {
-    match TcpStream::connect_timeout(address, timeout) {
-        Ok(_) => true,
-        Err(_) => false,
-    }
-}
-
-// gets message from TCP, converts it to Message and returns it
-pub fn get_message(reader: &mut BufReader<TcpStream>) -> Result<MessageType, Box<dyn Error>> {
-    let mut buf = Vec::new();
-    reader.read_until(b'\n', &mut buf)?;
-    let message = str::from_utf8(&buf)?;
-
-    let deserialized_msg: MessageType = serde_json::from_str(&message)?;
-    Ok(deserialized_msg)
-}
+use crate::message::{MessageType};
 
 // sends message via TCP, takes in a MessageType, serializes it and sends it
-pub fn send_message(stream: &mut TcpStream, message: MessageType) -> Result<(), Box<dyn Error>> {
-    let mut serialized_msg = serde_json::to_string(&message)?;
-    serialized_msg.push_str("\n");
-    stream.write_all(serialized_msg.as_bytes())?;
-
+pub async fn send_message<W>(writer: &mut W, msg: MessageType) -> Result<(), Box<dyn Error>>
+where W: AsyncWrite + Unpin, {
+    let serialized = serde_json::to_string(&msg)?;
+    writer.write_all(serialized.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
     Ok(())
 }
 
-pub fn send_to_clients(
-    clients: &Arc<Mutex<HashMap<SocketAddr, TcpStream>>>,
-    message: &str,
+pub async fn send_to_clients(
+    clients: &mut Arc<Mutex<HashMap<SocketAddr, WriteHalf<TcpStream>>>>,
+    msg: MessageType,
 ) -> Result<(), Box<dyn Error + 'static>> {
     Ok({
-        let mut clients = match clients.lock() {
-            Ok(c) => c,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut clients = clients.lock().await;
 
-        for (_, stream) in clients.iter_mut() {
-            stream.write_all(message.as_bytes())?;
+        for (socket, stream) in clients.iter_mut() {
+            match send_message(stream, msg.clone()).await {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("Error sending message to client {:?}: {}", socket, e);
+                },
+            };
         }
     })
 }

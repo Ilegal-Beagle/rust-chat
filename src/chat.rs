@@ -1,23 +1,22 @@
 // ui.rs
 use std::{
-    thread,
-    fs::{read},
+    collections::HashMap,
+    fs::read,
     net::{SocketAddr},
-    time::{Duration},
-    // sync::{mpsc},
-    collections::{HashMap},
+    time::Duration
 };
 use tokio::{
     sync::mpsc,
-    runtime::Handle,
+    net::TcpStream,
 };
 use egui::{Align, Layout, RichText, vec2};
 use egui_file_dialog::FileDialog;
 use uuid::Uuid;
-use crate::{message::Notification, network::{client, helpers, server}};
-use crate::message::{MessageType, Message, Handshake, Disconnect};
+use crate::{
+    message::{Disconnect, Handshake, Message, MessageType, Notification},
+    network::{client, server}
+};
 use local_ip_address::local_ip;
-
 
 enum State {
     Start,
@@ -40,10 +39,11 @@ pub struct App {
     image_bytes: Vec<u8>,
     profile_picture_list: Vec<String>,
     bad_ip_msg: bool,
+    rt_handle: tokio::runtime::Handle,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(handle: tokio::runtime::Handle) -> Self {
         let (tx, rx) = mpsc::channel(128);
         let sock = SocketAddr::new(local_ip().unwrap(), 5000);
         let paths = vec![
@@ -71,6 +71,7 @@ impl App {
             image_bytes: Vec::<u8>::new(),
             profile_picture_list: paths,
             bad_ip_msg: false,
+            rt_handle: handle,
         }
     }
 
@@ -119,12 +120,14 @@ impl App {
                     });
 
                     let tx_clone = self.tx.clone();
-                    match Handle::current().block_on(tx_clone.send(msg)) {
-                        Ok(_) => {},
-                        Err(e) => {
-                            eprintln!("error sending message to network: {}", e);
+                    self.rt_handle.spawn(async move {
+                        match tx_clone.send(msg).await {
+                            Ok(_) => {},
+                            Err(e) => {
+                                eprintln!("error sending message to network: {}", e);
+                            }
                         }
-                    }
+                    });
                     self.text.clear();
                     self.image_bytes.clear();
                 }
@@ -256,22 +259,35 @@ impl App {
     }
 
     fn handle_connect(&mut self) {
-        const TIMEOUT: Duration = Duration::new(5, 0);
-
         let (tx_ui, rx_ui) = mpsc::channel::<MessageType>(128);
         let (tx_net, rx_net) = mpsc::channel::<MessageType>(128);
         let socket = self.socket_addr.clone();
         
-        // if no server is found
-        if !helpers::try_connect(&socket, TIMEOUT) {
-            thread::spawn( move || {
-                let _ = server::server(&socket);
-            });
-        }
+        self.rt_handle.spawn(async move {
+            match TcpStream::connect(&socket).await {
+                Ok(stream) => {
+                    // Reuse this stream in client
+                    if let Err(e) = client::client(stream, tx_net, rx_ui).await {
+                        eprintln!("Client error: {}", e);
+                    }
+                },
+                Err(_) => {
+                    // Start server
+                    tokio::spawn(async move {
+                        if let Err(e) = server::server(&socket).await {
+                            eprintln!("Server error: {}", e);
+                        }
+                    });
 
-        thread::sleep(Duration::from_millis(50));
-        thread::spawn(move || {
-            let _ = client::client(&socket, rx_ui, tx_net);
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+
+                    // Create client normally
+                    let stream = TcpStream::connect(&socket).await.unwrap();
+                    if let Err(e) = client::client(stream, tx_net, rx_ui).await {
+                        eprintln!("Client error: {}", e);
+                    }
+                }
+            }
         });
 
         
@@ -279,46 +295,55 @@ impl App {
         self.rx = rx_net;
         self.current_state = State::Chat;
 
-        let mut messages: Vec<MessageType> = Vec::new();
-        messages.push(MessageType::Handshake(Handshake { user_name: self.user_name.clone()}));
-        messages.push(MessageType::Notification(
-            Notification { message: format!("{} has joined the chat", self.user_name)
-        }));
+        // messages to send
+        let messages: Vec<MessageType> = vec![
+            MessageType::Handshake(
+                Handshake { user_name: self.user_name.clone()}
+            ),
+            MessageType::Notification(
+                Notification { message: format!("{} has joined the chat", self.user_name)
+            })
+        ];
         
+        // send messages
         let tx_clone = self.tx.clone();
-        for msg in messages.iter() {
-            thread::sleep(Duration::new(1, 0));
-            match Handle::current().block_on(tx_clone.send(*msg)) {
-                Ok(_) => {},
-                Err(e) => {
-                    eprintln!("error sending message to network: {}", e);
+        self.rt_handle.spawn(async  move {
+            for msg in messages.iter() {
+                match tx_clone.send(msg.clone()).await {
+                    Ok(_) => {},
+                    Err(e) => {
+                        eprintln!("Error sending message to network: {}", e)
+                    }
                 }
             }
-        }
+        });
 
     }
     
     fn handle_disconnect(&mut self) {
         
-        let mut messages: Vec<MessageType> = Vec::new();
-        messages.push(MessageType::Disconnect(
-            Disconnect { user_name: self.user_name.clone(), ip: self.ip_str.clone()}
-        ));
-        messages.push(MessageType::Notification(
-            Notification {message: format!("{} has left the chat", self.user_name)}
-        ));
+        // messages to send
+        let messages: Vec<MessageType> = vec![
+            MessageType::Disconnect(
+                Disconnect { user_name: self.user_name.clone(), ip: self.ip_str.clone()}
+            ),
+            MessageType::Notification(
+                Notification {message: format!("{} has left the chat", self.user_name)}
+            )
+        ];
 
+        // send messages
         let tx_clone = self.tx.clone();
-        for msg in messages.iter() {
-            thread::sleep(Duration::new(1, 0));
-            match Handle::current().block_on(tx_clone.send(*msg)) {
-                Ok(_) => {},
-                Err(e   ) => {
-                    eprintln!("Error sending message to network: {}", e)
+        self.rt_handle.spawn(async  move {
+            for msg in messages.iter() {
+                match tx_clone.send(msg.clone()).await {
+                    Ok(_) => {},
+                    Err(e) => {
+                        eprintln!("Error sending message to network: {}", e)
+                    }
                 }
             }
-        }
-        
+        });
     }
 
 }
