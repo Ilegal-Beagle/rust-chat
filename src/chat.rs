@@ -3,18 +3,13 @@ use std::{
     collections::HashMap,
     fs::read,
     net::{SocketAddr},
-    time::Duration,
-};
-use tokio::{
-    sync::mpsc,
-    net::TcpStream,
 };
 use egui::{Align, Layout, RichText, vec2};
 use egui_file_dialog::FileDialog;
 use uuid::Uuid;
 use crate::{
     message::{Disconnect, Handshake, Message, MessageType, Notification},
-    network::{client, server}
+    network::{client::NetworkClient},
 };
 use local_ip_address::local_ip;
 use crate::tenor;
@@ -31,8 +26,6 @@ pub struct App {
     text: String,
     messages: Vec<MessageType>,
     users: HashMap<String, String>,
-    tx_ui: mpsc::Sender<MessageType>,
-    rx_net: mpsc::Receiver<MessageType>,
     current_state: State,
     file_dialog: FileDialog,
     socket_addr: SocketAddr,
@@ -42,13 +35,12 @@ pub struct App {
     bad_ip_msg: bool,
     rt_handle: tokio::runtime::Handle,
     tenor_api: tenor::TenorAPI,
-    gif_cache: Vec<String>,
+    client: Option<NetworkClient>,
+    _gif_cache: Vec<String>,
 }
 
 impl App {
     pub fn new(handle: tokio::runtime::Handle) -> Self {
-        let (tx, rx) = mpsc::channel(128);
-        // let (tx_api, rx_api) = mpsc::channel(128);
         let sock = SocketAddr::new(local_ip().unwrap(), 5000);
         let tenor = match tenor::TenorAPI::new() {
             Ok(api) => api,
@@ -71,8 +63,6 @@ impl App {
             text: "".to_owned(),
             messages: Vec::new(),
             users: HashMap::new(),
-            tx_ui: tx,
-            rx_net: rx,
             current_state: State::Start,
             file_dialog: FileDialog::new(),
             socket_addr: sock,
@@ -82,7 +72,8 @@ impl App {
             bad_ip_msg: false,
             rt_handle: handle,
             tenor_api: tenor,
-            gif_cache: Vec::<String>::new(),
+            client: None,
+            _gif_cache: Vec::<String>::new(),
         }
     }
 
@@ -90,11 +81,12 @@ impl App {
     fn render_chat(&mut self, ctx: &egui::Context) {
         
         // recieve message network side
-        match self.rx_net.try_recv() {
-            Ok(msg) => {
-                self.messages.push(msg);},
-            Err(_) => {}
-        }        
+        if let Some(net) = &mut self.client {
+            match net.recv() {
+                Some(msg) => self.messages.push(msg),
+                None => {},
+            }
+        }
 
         // render ui
         self.message_panel(ctx);
@@ -130,7 +122,7 @@ impl App {
                     || send_button_resp.clicked()
                 {
                     let time = chrono::Local::now().format("%I:%M %p").to_string();
-                    let msg = MessageType::Message(Message {
+                    let message = MessageType::Message(Message {
                             user_name: self.user_name.clone(),
                             profile_picture: self.profile_picture.clone(),
                             message: self.text.clone(),
@@ -140,15 +132,10 @@ impl App {
                             uuid_profile_picture: Uuid::new_v4().to_string(),
                     });
 
-                    let tx_clone = self.tx_ui.clone();
-                    self.rt_handle.spawn(async move {
-                        match tx_clone.send(msg).await {
-                            Ok(_) => {},
-                            Err(e) => {
-                                eprintln!("error sending message to network: {}", e);
-                            }
-                        }
-                    });
+                    if let Some(net) = &self.client {
+                        net.send(message, &self.rt_handle);
+                    }
+                    
                     self.text.clear();
                     self.image_bytes.clear();
                 }
@@ -322,41 +309,7 @@ impl App {
     }
 
     fn handle_connect(&mut self) {
-        let (tx_ui, rx_ui) = mpsc::channel::<MessageType>(128);
-        let (tx_net, rx_net) = mpsc::channel::<MessageType>(128);
-        let socket = self.socket_addr.clone();
-        
-        self.rt_handle.spawn(async move {
-            // try to connect to a server
-            match TcpStream::connect(&socket).await {
-                Ok(stream) => {
-                    // make the client
-                    if let Err(e) = client::client(stream, tx_net, rx_ui).await {
-                        eprintln!("Client error: {}", e);
-                    }
-                },
-                Err(_) => {
-                    // Start server
-                    tokio::spawn(async move {
-                        if let Err(e) = server::server(&socket).await {
-                            eprintln!("Server error: {}", e);
-                        }
-                    });
-
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-
-                    // Create client
-                    let stream = TcpStream::connect(&socket).await.unwrap();
-                    if let Err(e) = client::client(stream, tx_net, rx_ui).await {
-                        eprintln!("Client error: {}", e);
-                    }
-                }
-            }
-        });
-
-        
-        self.tx_ui = tx_ui;
-        self.rx_net = rx_net;
+        self.client = Some(NetworkClient::connect(self.socket_addr, &self.rt_handle));
         self.current_state = State::Chat;
 
         // messages to send
@@ -370,21 +323,11 @@ impl App {
         ];
         
         // send messages
-        let tx_clone = self.tx_ui.clone();
-        
-        self.rt_handle.spawn(async  move {
-        
-            for msg in messages.iter() {
-        
-                match tx_clone.send(msg.clone()).await {
-                    Ok(_) => {},
-                    Err(e) => {
-                        eprintln!("Error sending message to network: {}", e)
-                    }
-                }
+        if let Some(net) = &self.client {
+            for message in messages {
+                net.send(message.clone(), &self.rt_handle);
             }
-        });
-
+        }
     }
     
     fn handle_disconnect(&mut self) {
@@ -400,17 +343,11 @@ impl App {
         ];
 
         // send messages
-        let tx_clone = self.tx_ui.clone();
-        self.rt_handle.spawn(async  move {
-            for msg in messages.iter() {
-                match tx_clone.send(msg.clone()).await {
-                    Ok(_) => {},
-                    Err(e) => {
-                        eprintln!("Error sending message to network: {}", e)
-                    }
-                }
+        if let Some(net) = &self.client {
+            for message in messages {
+                net.send(message, &self.rt_handle);
             }
-        });
+        }
     }
 
 }

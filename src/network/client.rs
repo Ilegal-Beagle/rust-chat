@@ -1,8 +1,9 @@
 use std::{
-    error::Error,
+    error::Error, net::SocketAddr, time::Duration
 };
 use crate::{
-    message::MessageType, network::helpers,
+    message::MessageType,
+    network::{server, helpers},
 };
 use tokio::{
     io::{
@@ -11,8 +12,73 @@ use tokio::{
         split,
     },
     net::{TcpStream},
-    sync::mpsc::{Receiver, Sender},
+    sync::mpsc::{channel, Receiver, Sender},
 };
+
+pub struct NetworkClient {
+    tx_ui: Sender<MessageType>,
+    rx_net: Receiver<MessageType>,
+    _handle: tokio::task::JoinHandle<()>,
+}
+
+impl NetworkClient {
+    pub fn connect(socket: SocketAddr, rt_handle: &tokio::runtime::Handle) -> Self {
+        let (tx_ui, rx_ui) = channel::<MessageType>(128);
+        let (tx_net, rx_net) = channel::<MessageType>(128);
+
+        // try to connect to a server
+        let handle = rt_handle.spawn(async move {
+            match TcpStream::connect(&socket).await {
+                Ok(stream) => {
+                    // make the client
+                    if let Err(e) = client(stream, tx_net, rx_ui).await {
+                        eprintln!("Client error: {}", e);
+                    }
+                },
+                Err(_) => {
+                    // Start server, then start client
+                    tokio::spawn(async move {
+                        if let Err(e) = server::server(&socket).await {
+                            eprintln!("Server error: {}", e);
+                        }
+                    });
+    
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+    
+                    // Create client
+                    let stream = TcpStream::connect(&socket).await.unwrap();
+                    if let Err(e) = client(stream, tx_net, rx_ui).await {
+                        eprintln!("Client error: {}", e);
+                    }
+                }
+            }
+        });
+
+        Self {
+            tx_ui: tx_ui,
+            rx_net: rx_net,
+            _handle: handle,
+        }
+    }
+
+    // send messages to the network side
+    pub fn send(&self, message: MessageType, rt: &tokio::runtime::Handle) {
+        let tx = self.tx_ui.clone();
+        rt.spawn(async move {
+            if let Err(e) = tx.send(message).await {
+                eprintln!("Error sending message to the network: {e}");
+            }
+        });
+    }
+
+    pub fn recv(&mut self) -> Option<MessageType> {
+        match self.rx_net.try_recv() {
+            Ok(msg) => Some(msg),
+            Err(_) => None,
+        }
+    }
+
+}
 
 pub async fn client(
     // socket: &SocketAddr,

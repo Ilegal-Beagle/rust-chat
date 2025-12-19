@@ -15,9 +15,7 @@ pub struct TenorAPI {
 
 impl TenorAPI {
     pub fn new() -> Result<TenorAPI, Box<dyn Error>> {
-        let client = reqwest::Client::new();
-        
-        // make sure getting env var is successful, otherwise give an error
+        let client = reqwest::Client::new(); 
         dotenvy::dotenv().ok();
         let key = match env::var("TENOR_API_KEY"){
             Ok(key) => key,
