@@ -21,7 +21,6 @@ pub async fn client(
     mut rx_ui: Receiver<MessageType>
 ) -> Result<(), Box<dyn Error>> {
 
-    // let stream = TcpStream::connect(&socket).await?;
     println!("client created: {:?}", stream);
     let (reader, mut writer) = split(stream);
     let mut reader = BufReader::new(reader);

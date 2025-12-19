@@ -1,6 +1,7 @@
 mod network;
 mod chat;
 mod message;
+mod tenor;
 
 use crate::chat::App;
 use tokio;

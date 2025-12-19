@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     fs::read,
     net::{SocketAddr},
-    time::Duration
+    time::Duration,
 };
 use tokio::{
     sync::mpsc,
@@ -17,6 +17,7 @@ use crate::{
     network::{client, server}
 };
 use local_ip_address::local_ip;
+use crate::tenor;
 
 enum State {
     Start,
@@ -30,8 +31,8 @@ pub struct App {
     text: String,
     messages: Vec<MessageType>,
     users: HashMap<String, String>,
-    tx: mpsc::Sender<MessageType>,
-    rx: mpsc::Receiver<MessageType>,
+    tx_ui: mpsc::Sender<MessageType>,
+    rx_net: mpsc::Receiver<MessageType>,
     current_state: State,
     file_dialog: FileDialog,
     socket_addr: SocketAddr,
@@ -40,12 +41,19 @@ pub struct App {
     profile_picture_list: Vec<String>,
     bad_ip_msg: bool,
     rt_handle: tokio::runtime::Handle,
+    tenor_api: tenor::TenorAPI,
+    gif_cache: Vec<String>,
 }
 
 impl App {
     pub fn new(handle: tokio::runtime::Handle) -> Self {
         let (tx, rx) = mpsc::channel(128);
+        // let (tx_api, rx_api) = mpsc::channel(128);
         let sock = SocketAddr::new(local_ip().unwrap(), 5000);
+        let tenor = match tenor::TenorAPI::new() {
+            Ok(api) => api,
+            Err(_) => panic!(),
+        };
         let paths = vec![
             "file://assets/2000c.png".to_string(),
             "file://assets/20002.png".to_string(),
@@ -56,14 +64,15 @@ impl App {
             "file://assets/21019.png".to_string(),
             "file://assets/21042.png".to_string(),
         ];
+
         Self {
             user_name: "Default".to_string(),
             profile_picture: Vec::new(),
             text: "".to_owned(),
             messages: Vec::new(),
             users: HashMap::new(),
-            tx: tx,
-            rx: rx,
+            tx_ui: tx,
+            rx_net: rx,
             current_state: State::Start,
             file_dialog: FileDialog::new(),
             socket_addr: sock,
@@ -72,18 +81,30 @@ impl App {
             profile_picture_list: paths,
             bad_ip_msg: false,
             rt_handle: handle,
+            tenor_api: tenor,
+            gif_cache: Vec::<String>::new(),
         }
     }
 
+    // rendering the chat state along with its UI components
     fn render_chat(&mut self, ctx: &egui::Context) {
         
-        // recieve message from client part
-        match self.rx.try_recv() {
+        // recieve message network side
+        match self.rx_net.try_recv() {
             Ok(msg) => {
                 self.messages.push(msg);},
             Err(_) => {}
         }        
 
+        // render ui
+        self.message_panel(ctx);
+
+        self.side_panel(ctx);
+
+        self.chat_panel(ctx);
+    }
+
+    fn message_panel(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("message_entry").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let text_resp = ui.add(egui::TextEdit::singleline(&mut self.text)
@@ -119,7 +140,7 @@ impl App {
                             uuid_profile_picture: Uuid::new_v4().to_string(),
                     });
 
-                    let tx_clone = self.tx.clone();
+                    let tx_clone = self.tx_ui.clone();
                     self.rt_handle.spawn(async move {
                         match tx_clone.send(msg).await {
                             Ok(_) => {},
@@ -134,7 +155,9 @@ impl App {
 
             });
         });
+    }
 
+    fn side_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::right("user_panel")
             .resizable(false)
             .exact_width(100.0)
@@ -150,43 +173,17 @@ impl App {
                 });
 
                 ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
-                    let emoji_resp = ui.button("emojis");
+                    let emoji_button = ui.button("emojis");
+                    self.emoji_popup(&emoji_button, ui);
 
-                    // emoji popup menu
-                    egui::Popup::menu(&emoji_resp)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .width(50.0)
-                        .show(|ui| {
-
-                            ui.heading("emojis");
-                            
-                            egui::ScrollArea::vertical()
-                            .auto_shrink(false)
-                            .show(ui, |ui| {
-                            
-                                egui::Grid::new("emoji_board")
-                                    .spacing(vec2(1.0, 1.0))
-                                    .show(ui, |ui| {
-                                        for i in 1..75 {
-                                            
-                                            if i % 3 == 1 {
-                                                ui.end_row();
-                                            }
-                                            
-                                            let emoji = char::from_u32(0x1F600+i).unwrap();
-                                            let button_text = egui::RichText::new(emoji.to_string())
-                                                .size(30.0);
-                                            if ui.button(button_text).clicked() {
-                                                self.text.push(emoji);
-                                            }
-                                        }
-                                });
-                            });
-                    });
+                    let gif_button = ui.button("GIFs");
+                    self.gif_popup(&gif_button, ui);
                 });
 
             });
+    }
 
+    fn chat_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Chat Room");
             ui.separator();
@@ -209,6 +206,7 @@ impl App {
         });
     }
 
+    // rendering the start state UI
     fn render_start(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
 
@@ -258,15 +256,81 @@ impl App {
         });
     }
 
+    // helper functions
+    #[allow(unused_variables)]
+    fn emoji_popup(&mut self, resp: &egui::Response, ui: &mut egui::Ui) {
+        egui::Popup::menu(&resp)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .width(50.0)
+            .show(|ui| {
+
+                ui.heading("emojis");
+                
+                egui::ScrollArea::vertical()
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                
+                    egui::Grid::new("emoji_board")
+                        .spacing(vec2(1.0, 1.0))
+                        .show(ui, |ui| {
+                            for i in 1..75 {
+                                
+                                if i % 3 == 1 {
+                                    ui.end_row();
+                                }
+                                
+                                let emoji = char::from_u32(0x1F600+i).unwrap();
+                                let button_text = egui::RichText::new(emoji.to_string())
+                                    .size(30.0);
+                                if ui.button(button_text).clicked() {
+                                    self.text.push(emoji);
+                                }
+                            }
+                    });
+                });
+        });
+    }
+
+    #[allow(unused_variables)]
+    fn gif_popup(&mut self, resp: &egui::Response, ui: &mut egui::Ui) {
+        
+        // when the button is clicked
+        if resp.clicked() {
+            let mut api_clone = self.tenor_api.clone();
+
+            self.rt_handle.spawn(async move {
+                
+                match api_clone.featured(1).await {
+                    
+                    Ok(resp) => {
+                        println!("{:?}", resp);
+                        // send to ui
+                    },
+
+                    Err(e) => {
+                        eprintln!("{}", e);
+                    },
+                };
+            });
+        }
+
+        egui::Popup::menu(&resp)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.heading("gifs");
+            });
+    }
+
     fn handle_connect(&mut self) {
         let (tx_ui, rx_ui) = mpsc::channel::<MessageType>(128);
         let (tx_net, rx_net) = mpsc::channel::<MessageType>(128);
         let socket = self.socket_addr.clone();
         
         self.rt_handle.spawn(async move {
+            // try to connect to a server
             match TcpStream::connect(&socket).await {
                 Ok(stream) => {
-                    // Reuse this stream in client
+                    // make the client
                     if let Err(e) = client::client(stream, tx_net, rx_ui).await {
                         eprintln!("Client error: {}", e);
                     }
@@ -281,7 +345,7 @@ impl App {
 
                     tokio::time::sleep(Duration::from_millis(500)).await;
 
-                    // Create client normally
+                    // Create client
                     let stream = TcpStream::connect(&socket).await.unwrap();
                     if let Err(e) = client::client(stream, tx_net, rx_ui).await {
                         eprintln!("Client error: {}", e);
@@ -291,8 +355,8 @@ impl App {
         });
 
         
-        self.tx = tx_ui;
-        self.rx = rx_net;
+        self.tx_ui = tx_ui;
+        self.rx_net = rx_net;
         self.current_state = State::Chat;
 
         // messages to send
@@ -306,9 +370,12 @@ impl App {
         ];
         
         // send messages
-        let tx_clone = self.tx.clone();
+        let tx_clone = self.tx_ui.clone();
+        
         self.rt_handle.spawn(async  move {
+        
             for msg in messages.iter() {
+        
                 match tx_clone.send(msg.clone()).await {
                     Ok(_) => {},
                     Err(e) => {
@@ -333,7 +400,7 @@ impl App {
         ];
 
         // send messages
-        let tx_clone = self.tx.clone();
+        let tx_clone = self.tx_ui.clone();
         self.rt_handle.spawn(async  move {
             for msg in messages.iter() {
                 match tx_clone.send(msg.clone()).await {
