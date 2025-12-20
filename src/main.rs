@@ -1,10 +1,10 @@
 mod network;
-mod chat;
+mod ui;
 mod message;
 mod tenor;
 
-use crate::chat::App;
 use tokio;
+use crate::ui::app::App;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
