@@ -1,4 +1,5 @@
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct Gif {
     pub(crate) id: String,
     pub(crate) url: String,

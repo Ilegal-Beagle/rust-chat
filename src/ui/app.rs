@@ -25,13 +25,15 @@ enum View {
 pub struct App {
     pub(crate) network: NetworkState,
     pub(crate) user: UserState,
-    pub(crate) ui: UiState,
+    pub(crate) io: Io,
+    pub(crate) env: Env,
     view: View,
     pub(crate) rt_handle: tokio::runtime::Handle,
     pub(crate) tenor_api: tenor::TenorAPI,
     pub(crate) gif_cache: HashMap<String, gif::Gif>,
 }
 
+// handles anything network related
 pub(crate) struct NetworkState {
     pub(crate) tx: Sender<Vec<gif::Gif>>,
     pub(crate) rx: Receiver<Vec<gif::Gif>>,
@@ -41,19 +43,27 @@ pub(crate) struct NetworkState {
     pub(crate) client: Option<NetworkClient>,
 }
 
+// handles user related content like the local user, other connected users
+#[derive(Default)]
 pub(crate) struct UserState {
     pub(crate) local: User,
     pub(crate) peers: HashMap<String, String>,
     pub(crate) profile_picture_list: Vec<String>,
-
 }
 
-pub(crate) struct UiState {
-    pub(crate) message_text: String,
-    pub(crate) gif_search_text: String,
-    pub(crate) messages: Vec<MessageType>,
+// handles the input/output of app
+#[derive(Default)]
+pub(crate) struct Io {
     pub(crate) file_dialog: FileDialog,
+    pub(crate) gif_search_text: String,
     pub(crate) image_bytes: Vec<u8>,
+    pub(crate) message_text: String,
+    pub(crate) messages: Vec<MessageType>,
+}
+
+#[derive(Default)]
+pub(crate) struct Env {
+    pub(crate) window_size: egui::Vec2,
 }
 
 impl App {
@@ -84,24 +94,15 @@ impl App {
             client: None,
         };
 
-        let user = UserState {
-            peers: HashMap::new(),
-            local: User::new("Default".to_string(), Vec::new()),
-            profile_picture_list: paths,
-        };
-
-        let ui = UiState {
-            message_text: "".to_owned(),
-            gif_search_text: "".to_owned(),
-            messages: Vec::new(),
-            file_dialog: FileDialog::new(),
-            image_bytes: Vec::<u8>::new(),
-        };
+        let mut user = UserState::default();
+        user.profile_picture_list = paths;
+        let io = Io::default();
 
         Self {
             network: net,
             user: user,
-            ui: ui,
+            io: io,
+            env: Env::default(),
             view: View::Start,
             rt_handle: handle,
             tenor_api: tenor,
@@ -115,7 +116,7 @@ impl App {
         // recieve message network side
         if let Some(net) = &mut self.network.client {
             match net.recv() {
-                Some(msg) => self.ui.messages.push(msg),
+                Some(msg) => self.io.messages.push(msg),
                 None => {},
             }
         }
@@ -226,6 +227,10 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        
+        let rect = ctx.content_rect();
+        self.env.window_size = egui::vec2(rect.width(), rect.height());
+        
         match self.view {
             View::Start => self.render_start(ctx),
             View::Chat => self.render_chat(ctx),

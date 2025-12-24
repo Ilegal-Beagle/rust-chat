@@ -17,7 +17,7 @@ impl App {
     pub fn message_panel(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("message_entry").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let text_resp = ui.add(egui::TextEdit::singleline(&mut self.ui.message_text)
+                let text_resp = ui.add(egui::TextEdit::singleline(&mut self.io.message_text)
                     .desired_width(250.0)
                     .hint_text("Type Here")
                 );
@@ -26,13 +26,13 @@ impl App {
 
                 // image handling
                 if image_button_resp.clicked() {
-                    self.ui.file_dialog.pick_file();
+                    self.io.file_dialog.pick_file();
                 }
 
-                self.ui.file_dialog.update(ctx);
+                self.io.file_dialog.update(ctx);
 
-                if let Some(path) = self.ui.file_dialog.take_picked() {
-                    self.ui.image_bytes = read(path.to_str().unwrap()).expect("invalid file path");
+                if let Some(path) = self.io.file_dialog.take_picked() {
+                    self.io.image_bytes = read(path.to_str().unwrap()).expect("invalid file path");
                 }
 
                 // When enter is pressed in text box or send button is pressed
@@ -43,8 +43,8 @@ impl App {
                     let message = MessageType::Message(Message {
                             user_name: self.user.local.name.clone(),
                             profile_picture: self.user.local.picture.clone(),
-                            message: self.ui.message_text.clone(),
-                            image: self.ui.image_bytes.clone(),
+                            message: self.io.message_text.clone(),
+                            image: self.io.image_bytes.clone(),
                             timestamp: time,
                             uuid: Uuid::new_v4().to_string(),
                             uuid_profile_picture: Uuid::new_v4().to_string(),
@@ -54,8 +54,8 @@ impl App {
                         net.send(message, &self.rt_handle);
                     }
                     
-                    self.ui.message_text.clear();
-                    self.ui.image_bytes.clear();
+                    self.io.message_text.clear();
+                    self.io.image_bytes.clear();
                 }
 
             });
@@ -96,7 +96,7 @@ impl App {
             .stick_to_bottom(true)
             .auto_shrink(false)
             .show(ui, |ui| {
-                for msg in self.ui.messages.iter_mut() {
+                for msg in self.io.messages.iter_mut() {
                     match msg {
                         MessageType::Message(msg) => {ui.add(msg);},
                         MessageType::Notification(msg) => {ui.add(msg);},
