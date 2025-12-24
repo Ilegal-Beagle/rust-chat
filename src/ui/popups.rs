@@ -1,5 +1,6 @@
-use crate::App;
+use crate::{App, tenor::TenorResponse};
 use egui::vec2;
+use crate::gif;
 
 impl App {
     #[allow(unused_variables)]
@@ -28,7 +29,7 @@ impl App {
                                 let button_text = egui::RichText::new(emoji.to_string())
                                     .size(30.0);
                                 if ui.button(button_text).clicked() {
-                                    self.text.push(emoji);
+                                    self.ui.message_text.push(emoji);
                                 }
                             }
                     });
@@ -39,30 +40,97 @@ impl App {
     #[allow(unused_variables)]
     pub fn gif_popup(&mut self, resp: &egui::Response, ui: &mut egui::Ui) {
         
-        // when the button is clicked
         if resp.clicked() {
+            // send message to ui
             let mut api_clone = self.tenor_api.clone();
+            let tx_clone = self.network.tx.clone();
 
             self.rt_handle.spawn(async move {
                 
-                match api_clone.featured(1).await {
-                    
-                    Ok(resp) => {
-                        println!("{:?}", resp);
-                        // send to ui
-                    },
-
+                // get api response
+                let resp = match api_clone.featured(2).await {                    
+                    Ok(resp) => {resp},
                     Err(e) => {
                         eprintln!("{}", e);
+                        return;
                     },
                 };
+
+                let mut gif_results = Vec::<gif::Gif>::new();
+
+                // create a vec of gif structs to send back
+                for i in resp {
+                    let url = i.url.clone();
+                    let r = reqwest::get(url).await.unwrap();
+                    let t = r.text().await.unwrap();
+                    let result = serde_json::from_str::<TenorResponse>(&t);
+
+                    let bytes = reqwest::get(i.url.clone())
+                        .await
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap()
+                        .to_vec();
+                    
+                    gif_results.push(
+                        gif::Gif {
+                            id: i.id.clone(),
+                            url: i.url.clone(),
+                            tinygif_url: i.tinygif_url.clone(),
+                            gif_bytes: bytes,
+                        }
+                    );
+                }
+
+                let _ = tx_clone.try_send(gif_results);
+
             });
+
         }
+
+        // get response from api
+        match self.network.rx.try_recv() {
+            Ok(resp) => {
+                for result in resp {
+                    let k = result.id.clone();
+                    let v = result.clone();
+                    self.gif_cache.insert(k, v);
+                }
+            },
+            Err(_) => {
+            }
+        }
+
 
         egui::Popup::menu(&resp)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 ui.heading("gifs");
+                egui::ScrollArea::vertical()
+                    .max_width(150.0)
+                    .max_height(200.0)
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        ui.label("Search: ");
+                        ui.text_edit_singleline(&mut self.ui.gif_search_text);
+                        
+                        ui.separator();
+                        // show gifs
+                        for (id, gif) in &self.gif_cache {
+                            let image = egui::Image::new(gif.tinygif_url.clone())
+                                .fit_to_original_size(0.50)
+                                .corner_radius(5);
+                            let button = egui::Button::image(image);
+                            let button_resp = ui.add(button);                            
+                            
+                            // if button clicked, send the image data to the app's 
+                            if button_resp.clicked() {
+                                self.ui.image_bytes = gif.gif_bytes.clone();
+                                println!("{} bytes added!", gif.gif_bytes.len());
+                            }
+                        }
+                    });
             });
     }
 

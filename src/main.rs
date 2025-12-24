@@ -2,6 +2,8 @@ mod network;
 mod ui;
 mod message;
 mod tenor;
+mod user;
+mod gif;
 
 use tokio;
 use crate::ui::app::App;

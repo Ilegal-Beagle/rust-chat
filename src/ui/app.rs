@@ -2,44 +2,63 @@
 use std::{
     collections::HashMap,
     fs::read,
-    net::{SocketAddr},
+    net::SocketAddr,
 };
 use egui::{RichText, vec2};
 use egui_file_dialog::FileDialog;
+use tokio::sync::mpsc::{channel, Sender, Receiver};
 use crate::{
     message::{Disconnect, Handshake, MessageType, Notification},
-    network::{client::NetworkClient},
+    network::client::NetworkClient,
+    tenor,
+    user::User,
+    gif,
 };
 use local_ip_address::local_ip;
-use crate::tenor;
 
-enum State {
+enum View {
     Start,
     Connect,
     Chat,
 }
 
 pub struct App {
-    pub(crate) user_name: String,
-    pub(crate) profile_picture: Vec::<u8>,
-    pub(crate) text: String,
-    pub(crate) messages: Vec<MessageType>,
-    pub(crate) users: HashMap<String, String>,
-    current_state: State,
-    pub(crate) file_dialog: FileDialog,
-    pub(crate) socket_addr: SocketAddr,
-    pub(crate) ip_str: String,
-    pub(crate) image_bytes: Vec<u8>,
-    pub(crate) profile_picture_list: Vec<String>,
-    pub(crate) bad_ip_msg: bool,
+    pub(crate) network: NetworkState,
+    pub(crate) user: UserState,
+    pub(crate) ui: UiState,
+    view: View,
     pub(crate) rt_handle: tokio::runtime::Handle,
     pub(crate) tenor_api: tenor::TenorAPI,
+    pub(crate) gif_cache: HashMap<String, gif::Gif>,
+}
+
+pub(crate) struct NetworkState {
+    pub(crate) tx: Sender<Vec<gif::Gif>>,
+    pub(crate) rx: Receiver<Vec<gif::Gif>>,
+    pub(crate) socket_addr: SocketAddr,
+    pub(crate) bad_ip_msg: bool,
+    pub(crate) ip_str: String,
     pub(crate) client: Option<NetworkClient>,
-    pub(crate) _gif_cache: Vec<String>,
+}
+
+pub(crate) struct UserState {
+    pub(crate) local: User,
+    pub(crate) peers: HashMap<String, String>,
+    pub(crate) profile_picture_list: Vec<String>,
+
+}
+
+pub(crate) struct UiState {
+    pub(crate) message_text: String,
+    pub(crate) gif_search_text: String,
+    pub(crate) messages: Vec<MessageType>,
+    pub(crate) file_dialog: FileDialog,
+    pub(crate) image_bytes: Vec<u8>,
 }
 
 impl App {
     pub fn new(handle: tokio::runtime::Handle) -> Self {
+        let (tx, rx) = channel::<Vec<gif::Gif>>(128);
         let sock = SocketAddr::new(local_ip().unwrap(), 5000);
         let tenor = match tenor::TenorAPI::new() {
             Ok(api) => api,
@@ -56,23 +75,37 @@ impl App {
             "file://assets/21042.png".to_string(),
         ];
 
-        Self {
-            user_name: "Default".to_string(),
-            profile_picture: Vec::new(),
-            text: "".to_owned(),
-            messages: Vec::new(),
-            users: HashMap::new(),
-            current_state: State::Start,
-            file_dialog: FileDialog::new(),
+        let net = NetworkState {
+            tx:tx,
+            rx: rx,
             socket_addr: sock,
             ip_str: sock.to_string(),
-            image_bytes: Vec::<u8>::new(),
-            profile_picture_list: paths,
             bad_ip_msg: false,
+            client: None,
+        };
+
+        let user = UserState {
+            peers: HashMap::new(),
+            local: User::new("Default".to_string(), Vec::new()),
+            profile_picture_list: paths,
+        };
+
+        let ui = UiState {
+            message_text: "".to_owned(),
+            gif_search_text: "".to_owned(),
+            messages: Vec::new(),
+            file_dialog: FileDialog::new(),
+            image_bytes: Vec::<u8>::new(),
+        };
+
+        Self {
+            network: net,
+            user: user,
+            ui: ui,
+            view: View::Start,
             rt_handle: handle,
             tenor_api: tenor,
-            client: None,
-            _gif_cache: Vec::<String>::new(),
+            gif_cache: HashMap::new(),
         }
     }
 
@@ -80,9 +113,9 @@ impl App {
     fn render_chat(&mut self, ctx: &egui::Context) {
         
         // recieve message network side
-        if let Some(net) = &mut self.client {
+        if let Some(net) = &mut self.network.client {
             match net.recv() {
-                Some(msg) => self.messages.push(msg),
+                Some(msg) => self.ui.messages.push(msg),
                 None => {},
             }
         }
@@ -105,22 +138,22 @@ impl App {
                 ui.separator();
 
                 ui.label("Username: ");
-                ui.add(egui::TextEdit::singleline(&mut self.user_name).desired_width(100.0));
+                ui.add(egui::TextEdit::singleline(&mut self.user.local.name).desired_width(100.0));
                 ui.add_space(5.0);
 
                 ui.label("ip and port: ");
-                ui.add(egui::TextEdit::singleline(&mut self.ip_str).desired_width(100.0));
+                ui.add(egui::TextEdit::singleline(&mut self.network.ip_str).desired_width(100.0));
                 ui.add_space(10.0);
 
                 ui.heading(RichText::new("Choose a Profile Picture"));
                 egui::Grid::new("profile_pictures").show(ui, |ui| {
-                    for path in self.profile_picture_list.iter() {
+                    for path in self.user.profile_picture_list.iter() {
                         let image = egui::Image::from_uri(path);
                         if ui.add(
                             egui::Button::image(image.fit_to_fraction(vec2(2.0, 2.0)))
                         ).clicked() {
                             let p = path.trim_start_matches("file://");
-                            self.profile_picture = read(p).unwrap(); // should never fail
+                            self.user.local.picture = read(p).unwrap(); // should never fail
                         }
                     }
                 });
@@ -128,18 +161,18 @@ impl App {
                 ui.add_space(10.0);
                 
                 if ui.button("Enter").clicked()  {
-                    match self.ip_str.as_str().parse() {
+                    match self.network.ip_str.as_str().parse() {
                         Ok(ip) => {
-                            self.socket_addr = ip;
-                            self.current_state = State::Connect;
+                            self.network.socket_addr = ip;
+                            self.view = View::Connect;
                         },
                         Err(_) => {
-                            self.bad_ip_msg = true;
+                            self.network.bad_ip_msg = true;
                         },
                     }
                 }
 
-                if self.bad_ip_msg {
+                if self.network.bad_ip_msg {
                     ui.colored_label(egui::Color32::DARK_RED, "Invalid IP chosen");
                 }
             });
@@ -148,21 +181,21 @@ impl App {
 
     // helper functions
     fn handle_connect(&mut self) {
-        self.client = Some(NetworkClient::connect(self.socket_addr, &self.rt_handle));
-        self.current_state = State::Chat;
+        self.network.client = Some(NetworkClient::connect(self.network.socket_addr, &self.rt_handle));
+        self.view = View::Chat;
 
         // messages to send
         let messages: Vec<MessageType> = vec![
             MessageType::Handshake(
-                Handshake { user_name: self.user_name.clone()}
+                Handshake { user_name: self.user.local.name.clone()}
             ),
             MessageType::Notification(
-                Notification { message: format!("{} has joined the chat", self.user_name)
+                Notification { message: format!("{} has joined the chat", self.user.local.name)
             })
         ];
         
         // send messages
-        if let Some(net) = &self.client {
+        if let Some(net) = &self.network.client {
             for message in messages {
                 net.send(message.clone(), &self.rt_handle);
             }
@@ -174,15 +207,15 @@ impl App {
         // messages to send
         let messages: Vec<MessageType> = vec![
             MessageType::Disconnect(
-                Disconnect { user_name: self.user_name.clone(), ip: self.ip_str.clone()}
+                Disconnect { user_name: self.user.local.name.clone(), ip: self.network.ip_str.clone()}
             ),
             MessageType::Notification(
-                Notification {message: format!("{} has left the chat", self.user_name)}
+                Notification {message: format!("{} has left the chat", self.user.local.name)}
             )
         ];
 
         // send messages
-        if let Some(net) = &self.client {
+        if let Some(net) = &self.network.client {
             for message in messages {
                 net.send(message, &self.rt_handle);
             }
@@ -193,10 +226,10 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        match self.current_state {
-            State::Start => self.render_start(ctx),
-            State::Chat => self.render_chat(ctx),
-            State::Connect => self.handle_connect(),
+        match self.view {
+            View::Start => self.render_start(ctx),
+            View::Chat => self.render_chat(ctx),
+            View::Connect => self.handle_connect(),
         }
     }
 

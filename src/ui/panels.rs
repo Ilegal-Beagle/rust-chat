@@ -4,7 +4,7 @@ use std::{
 
 use crate::{
     message::{Message, MessageType},
-    ui::app::App,
+    App
 };
 
 use egui::{
@@ -17,7 +17,7 @@ impl App {
     pub fn message_panel(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("message_entry").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let text_resp = ui.add(egui::TextEdit::singleline(&mut self.text)
+                let text_resp = ui.add(egui::TextEdit::singleline(&mut self.ui.message_text)
                     .desired_width(250.0)
                     .hint_text("Type Here")
                 );
@@ -26,13 +26,13 @@ impl App {
 
                 // image handling
                 if image_button_resp.clicked() {
-                    self.file_dialog.pick_file();
+                    self.ui.file_dialog.pick_file();
                 }
 
-                self.file_dialog.update(ctx);
+                self.ui.file_dialog.update(ctx);
 
-                if let Some(path) = self.file_dialog.take_picked() {
-                    self.image_bytes = read(path.to_str().unwrap()).expect("invalid file path");
+                if let Some(path) = self.ui.file_dialog.take_picked() {
+                    self.ui.image_bytes = read(path.to_str().unwrap()).expect("invalid file path");
                 }
 
                 // When enter is pressed in text box or send button is pressed
@@ -41,21 +41,21 @@ impl App {
                 {
                     let time = chrono::Local::now().format("%I:%M %p").to_string();
                     let message = MessageType::Message(Message {
-                            user_name: self.user_name.clone(),
-                            profile_picture: self.profile_picture.clone(),
-                            message: self.text.clone(),
-                            image: self.image_bytes.clone(),
+                            user_name: self.user.local.name.clone(),
+                            profile_picture: self.user.local.picture.clone(),
+                            message: self.ui.message_text.clone(),
+                            image: self.ui.image_bytes.clone(),
                             timestamp: time,
                             uuid: Uuid::new_v4().to_string(),
                             uuid_profile_picture: Uuid::new_v4().to_string(),
                     });
 
-                    if let Some(net) = &self.client {
+                    if let Some(net) = &self.network.client {
                         net.send(message, &self.rt_handle);
                     }
                     
-                    self.text.clear();
-                    self.image_bytes.clear();
+                    self.ui.message_text.clear();
+                    self.ui.image_bytes.clear();
                 }
 
             });
@@ -72,7 +72,7 @@ impl App {
                     ui.heading(egui::RichText::new("Users"));
                     ui.separator();
 
-                    for (key, _) in &mut self.users {
+                    for (key, _) in &mut self.user.peers {
                         ui.label(key);
                     }
                 });
@@ -96,13 +96,13 @@ impl App {
             .stick_to_bottom(true)
             .auto_shrink(false)
             .show(ui, |ui| {
-                for msg in self.messages.iter_mut() {
+                for msg in self.ui.messages.iter_mut() {
                     match msg {
                         MessageType::Message(msg) => {ui.add(msg);},
                         MessageType::Notification(msg) => {ui.add(msg);},
                         MessageType::Handshake(_) => {},
                         MessageType::UserList(msg) => {
-                            self.users = msg.clone();
+                            self.user.peers = msg.clone();
                         },
                         MessageType::Disconnect(_) => {},
                     }

@@ -30,8 +30,8 @@ impl TenorAPI {
     }
 
     // returns a vec of strings to the urls of featured gifs
-    pub async fn featured(&mut self, limit: u32) -> Result<Vec<String>, Box<dyn Error>>{
-        let mut gif_urls = Vec::<String>::new();
+    pub async fn featured(&mut self, limit: u32) -> Result<Vec<TenorGif>, Box<dyn Error>>{
+        let mut gif_urls = Vec::<TenorGif>::new();
         let response = self.client.get(
             format!(
                 "https://tenor.googleapis.com/v2/featured?key={}&client_key={}&limit={}",
@@ -40,9 +40,41 @@ impl TenorAPI {
             .send()
             .await?;
 
-        let mut parsed = response.json::<TenorResponse>().await?;
-        for result in parsed.results.iter_mut() {
-            gif_urls.push(result.media_formats.gif.url.clone())
+        let text = response.text().await?;
+        // println!("{:?}", text);
+
+        let parsed = serde_json::from_str::<TenorResponse>(&text)?;
+        for result in parsed.results {
+            gif_urls.push( TenorGif {
+                id: result.id.clone(),
+                url: result.media_formats.gif.url.clone(),
+                tinygif_url: result.media_formats.tinygif.url.clone(),
+            });
+        }
+        Ok(gif_urls)
+    }
+
+    pub async fn search(&mut self, search: String, limit: u32) -> Result<Vec<TenorGif>, Box<dyn Error>> {
+        let mut gif_urls = Vec::<TenorGif>::new();
+        let response = self.client.get(
+            format!(
+                "https://tenor.googleapis.com/v2/search?q={}&key={}&client_key={}&limit={}",
+                search, self.key, self.client_key, limit
+            )
+        )
+            .send()
+            .await?;
+
+        let text = response.text().await?;
+        // println!("{:?}", text);
+
+        let parsed = serde_json::from_str::<TenorResponse>(&text)?;
+        for result in parsed.results {
+            gif_urls.push( TenorGif {
+                id: result.id.clone(),
+                url: result.media_formats.gif.url.clone(),
+                tinygif_url: result.media_formats.tinygif.url.clone()
+            });
         }
         Ok(gif_urls)
     }
@@ -58,6 +90,7 @@ pub struct TenorResponse {
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct TenorResult {
+    id: String,
     media_formats: MediaFormats,
 }
 
@@ -65,10 +98,23 @@ struct TenorResult {
 #[derive(Debug, Deserialize)]
 struct MediaFormats {
     gif: Gif,
+    tinygif: TinyGif,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Gif {
     url: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct TinyGif {
+    url: String,
+}
+
+pub struct TenorGif {
+    pub id: String,
+    pub url: String,
+    pub tinygif_url: String,
 }
