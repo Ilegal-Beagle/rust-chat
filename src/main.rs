@@ -4,9 +4,11 @@ mod message;
 mod tenor;
 mod user;
 mod gif;
+mod views;
+mod app;
 
 use tokio;
-use crate::ui::app::App;
+use crate::app::app::App;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {

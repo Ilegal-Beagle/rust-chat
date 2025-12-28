@@ -8,6 +8,7 @@ A simple TCP-based chat system written in Rust.
 * Works over LAN or localhost
 * limited emoji selector
 * image/gif support
+* Tenor API support
 * profile picture selection
 
 ## How to run
@@ -21,6 +22,3 @@ cargo run
 * Authentication
 * Private messaging (/dm)
 * Rooms/channels
-* WebSocket frontend
-* Message history
-* Better protocol (JSON or protobuf)

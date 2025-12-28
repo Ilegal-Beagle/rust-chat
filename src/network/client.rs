@@ -1,18 +1,12 @@
-use std::{
-    error::Error, net::SocketAddr, time::Duration
-};
 use crate::{
     message::MessageType,
-    network::{server, helpers},
+    network::{helpers, server},
 };
+use std::{error::Error, net::SocketAddr, time::Duration};
 use tokio::{
-    io::{
-        AsyncBufReadExt,
-        BufReader,
-        split,
-    },
-    net::{TcpStream},
-    sync::mpsc::{channel, Receiver, Sender},
+    io::{AsyncBufReadExt, BufReader, split},
+    net::TcpStream,
+    sync::mpsc::{Receiver, Sender, channel},
 };
 
 pub struct NetworkClient {
@@ -34,7 +28,7 @@ impl NetworkClient {
                     if let Err(e) = client(stream, tx_net, rx_ui).await {
                         eprintln!("Client error: {}", e);
                     }
-                },
+                }
                 Err(_) => {
                     // Start server, then start client
                     tokio::spawn(async move {
@@ -42,9 +36,9 @@ impl NetworkClient {
                             eprintln!("Server error: {}", e);
                         }
                     });
-    
+
                     tokio::time::sleep(Duration::from_millis(500)).await;
-    
+
                     // Create client
                     let stream = TcpStream::connect(&socket).await.unwrap();
                     if let Err(e) = client(stream, tx_net, rx_ui).await {
@@ -77,16 +71,14 @@ impl NetworkClient {
             Err(_) => None,
         }
     }
-
 }
 
 pub async fn client(
     // socket: &SocketAddr,
     stream: TcpStream,
     tx_net: Sender<MessageType>,
-    mut rx_ui: Receiver<MessageType>
+    mut rx_ui: Receiver<MessageType>,
 ) -> Result<(), Box<dyn Error>> {
-
     println!("client created: {:?}", stream);
     let (reader, mut writer) = split(stream);
     let mut reader = BufReader::new(reader);
@@ -94,7 +86,7 @@ pub async fn client(
 
     loop {
         tokio::select! {
-            
+
             // recieve from server
             result = reader.read_line(&mut buf) => {
                 match result {

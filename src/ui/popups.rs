@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use crate::App;
 use egui::vec2;
 use crate::gif;
