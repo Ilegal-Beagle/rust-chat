@@ -39,7 +39,7 @@ impl App {
                     match self.network.ip_str.as_str().parse() {
                         Ok(ip) => {
                             self.network.socket_addr = ip;
-                            self.view = View::Connect;
+                            self.view = View::Select;
                         },
                         Err(_) => {
                             self.network.bad_ip_msg = true;

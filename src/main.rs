@@ -6,6 +6,7 @@ mod user;
 mod gif;
 mod views;
 mod app;
+mod room;
 
 use tokio;
 use crate::app::app::App;

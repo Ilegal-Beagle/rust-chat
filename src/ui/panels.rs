@@ -1,5 +1,5 @@
 use std::{
-    fs::read
+    fs::read, sync::Arc
 };
 
 use crate::{
@@ -44,7 +44,7 @@ impl App {
                             user_name: self.user.local.name.clone(),
                             profile_picture: self.user.local.picture.clone(),
                             message: self.io.message_text.clone(),
-                            image: self.io.image_bytes.clone(),
+                            image: Arc::new(self.io.image_bytes.clone()),
                             timestamp: time,
                             uuid: Uuid::new_v4().to_string(),
                             uuid_profile_picture: Uuid::new_v4().to_string(),
@@ -100,7 +100,7 @@ impl App {
                     match msg {
                         MessageType::Message(msg) => {ui.add(msg);},
                         MessageType::Notification(msg) => {ui.add(msg);},
-                        MessageType::Handshake(_) => {},
+                        MessageType::Connect(_) => {},
                         MessageType::UserList(msg) => {
                             self.user.peers = msg.clone();
                         },

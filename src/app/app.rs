@@ -1,7 +1,7 @@
 // ui.rs
 use crate::{
     gif,
-    message::{Disconnect, Handshake, MessageType, Notification},
+    message::{Disconnect, Connect, MessageType, Notification},
     network::{client::NetworkClient, state::NetworkState},
     tenor,
     user::state::UserState,
@@ -91,7 +91,7 @@ impl App {
 
         // messages to send
         let messages: Vec<MessageType> = vec![
-            MessageType::Handshake(Handshake {
+            MessageType::Connect(Connect {
                 user_name: self.user.local.name.clone(),
             }),
             MessageType::Notification(Notification {

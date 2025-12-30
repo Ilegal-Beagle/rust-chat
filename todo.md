@@ -1,0 +1,11 @@
+- reorganize `message` file
+- cloning the message's image is expensive, I can use Arc<> to not clone the value, making it cheaper
+- currently, handshakes handles both adding and deleting users
+    - this means that if a user tries to use a name that is already in use, it will remove that user from the user list
+    - make functions that explicitly add and remove users
+    - this will allow the program to notify the client that the username is taken and will not remove the username that is already in use
+- every frame, the UI is reloading images
+    - use textured images or a cache
+- improve error handling
+- Add to server a room list
+    - let the client choose which room to go into

@@ -116,9 +116,8 @@ pub async fn client(
                 match msg_opt {
                     Some(msg) => {
                         // Successfully received a message from the UI task
-                        match helpers::send_message(&mut writer, msg).await {
-                            Ok(_) => {println!("message sent")},
-                            Err(e) => {eprintln!("error sending message to server: {}", e)},
+                        if let Err(e) =  helpers::send_message(&mut writer, msg).await {
+                            eprintln!("error sending message to server: {}", e);
                         };
                     }
                     None => {
